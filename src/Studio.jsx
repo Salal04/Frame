@@ -3,6 +3,7 @@ import * as P from './playlist.js'
 import { VOICES, STYLE_PRESETS, PROJECT_FIELDS, GLOBAL_FIELDS, GLOBAL_DEFAULTS, LIST_PATHS, LIST_INFO, SAMPLE, csv, getPath, setPath, ttsNote } from './config.js'
 import { previewVoice } from './tts.js'
 import Robot from './Robot.jsx'
+import { connectBackend } from './drive.js'
 
 // ---------- one generic input: [path, label, type, hint, options] ----------
 function Field({ d, value, onChange }) {
@@ -121,6 +122,21 @@ export function ThumbStudio({ p, cfg, save, rows, setRows, run, focus }) {
       <button className="ghost" onClick={() => run('Saving style…', () => save({ ...cfg, thumb: th }))}>Save as this playlist’s style</button></div></section>
 }
 
+// ---------- Backend link: one refresh token for the GitHub secret ----------
+function BackendLink({ run }) {
+  const [tok, setTok] = useState(''), [copied, setCopied] = useState(false)
+  const go = () => run('Connecting backend…', async () => { setTok(await connectBackend()); setCopied(false) })
+  const copy = async () => { await navigator.clipboard.writeText(tok); setCopied(true) }
+  return <section>
+    <h3>Backend connection</h3>
+    <p className="muted">The video backend runs in your own GitHub repository and needs permission to read this workspace. Connect once, then paste the token into your repository as the secret <b>GOOGLE_REFRESH_TOKEN</b> (Settings, Secrets and variables, Actions).</p>
+    <div className="row"><button className="ghost" onClick={go}>{tok ? 'Create a new token' : 'Connect backend'}</button>
+      {tok && <button className="cta sm" onClick={copy}>{copied ? 'Copied' : 'Copy token'}</button>}</div>
+    {tok && <><label>Refresh token<input readOnly className="secret" value={tok} onFocus={e => e.target.select()} /></label>
+      <small className="hint">Shown once. Anyone with this token can read your Frame AI files, so paste it only into your own repository secrets.</small></>}
+  </section>
+}
+
 // ---------- Control room: global config file ----------
 export function ControlRoom({ g, run }) {
   const init = () => { let d = structuredClone(g.cfg); LIST_PATHS.forEach(p => { d = setPath(d, p, getPath(d, p).join('\n')) }); return d }
@@ -129,7 +145,8 @@ export function ControlRoom({ g, run }) {
   const out = () => { let o = structuredClone(d); LIST_PATHS.forEach(p => { o = setPath(o, p, csv(getPath(o, p))) }); return o }
   const list = p => <label key={p}>{LIST_INFO[p][0]}<textarea rows={p.startsWith('keys') ? 3 : 5} className={p.startsWith('keys') && !show ? 'secret' : ''} spellCheck="false" value={getPath(d, p)} onChange={e => put(p, e.target.value)} /><small className="hint">{LIST_INFO[p][1]}</small></label>
   return <main className="page"><h2>Control room</h2>
-    <p className="muted">These settings apply to every playlist. They live in <b>Frame AI Config / frame_config.json</b> in your Drive, a private folder outside the shared one.</p>
+    <p className="muted">These settings apply to every playlist. They live in <b>Frame AI / Application Config / frame_config.json</b> in your own Drive. The folder is private; do not share it, because it holds your API keys.</p>
+    <BackendLink run={run} />
     <h3>Keys</h3>{['keys.gemini', 'keys.tts', 'keys.cloudTts'].map(list)}
     <label className="chk"><input type="checkbox" checked={show} onChange={e => setShow(e.target.checked)} />Show keys</label>
     <h3>Models</h3><div className="cols">{LIST_PATHS.filter(p => p.startsWith('models')).map(list)}</div>
