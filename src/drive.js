@@ -67,30 +67,34 @@ const REQ_SEED = [['Mosque exterior (b-roll)', 'Wide shot of a mosque at golden 
   ['Sky / clouds timelapse', 'Calm sky timelapse for reflective moments, 10 seconds', '', '', '', '', '']]
 
 // ---------- workspace bootstrap ----------
-// Drive layout:
-//   Application Config/   (private)  frame_config.json, production_record.json, Projects (registry sheet), Scene/, Requirements/
-//   Frame AI/            (public, view only)  Projects/  ->  one folder per project
+// Drive layout (everything visible in one tree, nothing hidden):
+//   Frame AI/
+//     Application Config/  frame_config.json, Production Plan (sheet), Production Record (sheet), Projects (registry sheet), Scene/, Requirements/
+//     Projects/            one folder per project
 const move = (id, from, to) => api(`${D}/files/${id}?addParents=${to}&removeParents=${from}&fields=id`, { method: 'PATCH', body: '{}' })
-async function ensureAppConfig() {
-  const a = await find('Application Config', 'root', FOLDER)
+async function ensureAppConfig(root) {
+  const a = await find('Application Config', root, FOLDER)
   if (a) return a
-  const old = await find('Frame AI Config', null, FOLDER)   // older versions: same folder, old name (keeps frame_config.json)
-  if (old) { await api(`${D}/files/${old.id}?fields=id`, { method: 'PATCH', body: JSON.stringify({ name: 'Application Config' }) }); return old }
-  return mkFolder('Application Config')
+  // older layouts kept it (or "Frame AI Config") at the top of Drive, outside Frame AI: bring it inside
+  const old = (await find('Application Config', null, FOLDER)) || (await find('Frame AI Config', null, FOLDER))
+  if (!old) return mkFolder('Application Config', root)
+  const from = (await api(`${D}/files/${old.id}?fields=parents`)).parents?.[0]
+  await api(`${D}/files/${old.id}?addParents=${root}${from ? `&removeParents=${from}` : ''}&fields=id`, { method: 'PATCH', body: JSON.stringify({ name: 'Application Config' }) })
+  return old
 }
-// find it inside Application Config; else pull it in from the old public root; else null
+// find it inside Application Config; else pull it in from the old root; else null
 async function adopt(name, mime, app, root) {
   const f = await find(name, app, mime); if (f) return f
   const o = await find(name, root, mime); if (!o) return null
   await move(o.id, root, app); return o
 }
 export async function init() {
-  const app = await ensureAppConfig()
   let root = await find('Frame AI', null, FOLDER)
   if (!root) {
     root = await mkFolder('Frame AI')
-    await api(`${D}/files/${root.id}/permissions`, { method: 'POST', body: JSON.stringify({ type: 'anyone', role: 'reader' }) }) // public, view-only
+    await api(`${D}/files/${root.id}/permissions`, { method: 'POST', body: JSON.stringify({ type: 'anyone', role: 'reader' }) }) // anyone with the link can view; you edit from your own account
   }
+  const app = await ensureAppConfig(root.id)
   const ps = await adopt('Projects', SHEET, app.id, root.id)
   const projectsSheet = ps ? ps.id : await mkSheet('Projects', app.id, [{ title: 'Projects', header: [] }])
   await put(projectsSheet, 'Projects!A1:G1', [['Project Name', 'Folder ID', 'Sheet ID', 'Created', 'Videos Folder ID', 'Global Folder ID', 'Status']])
@@ -274,4 +278,4 @@ export async function readTable(file) {
 }
 
 // internals shared with playlist.js (config files, playlist sheet, thumbnails)
-export { api, find, move, mkFolder, ensureFolder, put, read, append, log, safe, now, upload, delRow, enc, D, S }
+export { api, find, move, mkSheet, mkFolder, ensureFolder, put, read, append, log, safe, now, upload, delRow, enc, D, S }
