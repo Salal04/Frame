@@ -8,6 +8,7 @@ import Robot from './Robot.jsx'
 function Field({ d, value, onChange }) {
   const [, label, type, hint, opts] = d
   if (type === 'bool') return <label className="chk"><input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />{label}</label>
+  if (type === 'textarea') return <label className="wide">{label}<textarea rows={4} value={value ?? ''} onChange={e => onChange(e.target.value)} />{hint && <small className="hint">{hint}</small>}</label>
   return <label>{label}
     {type === 'select'
       ? <select value={value ?? ''} onChange={e => onChange(e.target.value)}>{opts.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
@@ -110,7 +111,8 @@ export function ThumbStudio({ p, cfg, save, rows, setRows, run, focus }) {
     <div>
       <label>Video<select value={sel} onChange={e => pickRow(e.target.value)}>{!rows.length && <option value="">Add a video first</option>}{rows.map(r => <option key={r.row} value={r.row}>{r.order || r.row}. {r.title}</option>)}</select></label>
       <label>Text on thumbnail<input value={txt} onChange={e => setTxt(e.target.value)} placeholder="Empty = video title" /></label>
-      <div className="row"><input ref={f} type="file" accept="image/*" hidden onChange={upload} /><button className="ghost" onClick={() => f.current.click()}>{th.templateId ? 'Change template' : 'Upload template'}</button><small className="muted">{th.templateName || 'No template yet: a clay gradient is used'}</small></div>
+      <div className="row"><input ref={f} type="file" accept="image/*" hidden onChange={upload} /><button className="ghost" onClick={() => f.current.click()}>{th.templateId ? 'Change default template' : 'Upload default template'}</button><small className="muted">{th.templateName || 'No template yet: a clay gradient is used'}</small></div>
+      <p className="hint">The default template belongs to the whole project. Every video without a thumbnail of its own uses it, and the backend writes that video's title on it with the style below. Saved: {th.templateLink ? 'link ready for the backend' : 'upload one to get the link'}.</p>
       <label>Font<select value={th.font} onChange={e => set('font')(e.target.value)}>{FONTS.map(x => <option key={x}>{x}</option>)}</select></label>
       {slider('size', 'Text size', 40, 220)}{slider('x', 'Horizontal position (%)', 0, 100)}{slider('y', 'Vertical position (%)', 5, 95)}{slider('maxWidth', 'Line width (%)', 20, 95)}
       <div className="row"><label>Text colour<input type="color" value={th.color} onChange={e => set('color')(e.target.value)} /></label><label>Outline<input type="color" value={th.stroke} onChange={e => set('stroke')(e.target.value)} /></label>
