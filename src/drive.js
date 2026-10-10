@@ -67,26 +67,49 @@ const REQ_SEED = [['Mosque exterior (b-roll)', 'Wide shot of a mosque at golden 
   ['Sky / clouds timelapse', 'Calm sky timelapse for reflective moments, 10 seconds', '', '', '', '', '']]
 
 // ---------- workspace bootstrap ----------
+// Drive layout:
+//   Application Config/   (private)  frame_config.json, production_record.json, Projects (registry sheet), Scene/, Requirements/
+//   Frame AI/            (public, view only)  Projects/  ->  one folder per project
+const move = (id, from, to) => api(`${D}/files/${id}?addParents=${to}&removeParents=${from}&fields=id`, { method: 'PATCH', body: '{}' })
+async function ensureAppConfig() {
+  const a = await find('Application Config', 'root', FOLDER)
+  if (a) return a
+  const old = await find('Frame AI Config', null, FOLDER)   // older versions: same folder, old name (keeps frame_config.json)
+  if (old) { await api(`${D}/files/${old.id}?fields=id`, { method: 'PATCH', body: JSON.stringify({ name: 'Application Config' }) }); return old }
+  return mkFolder('Application Config')
+}
+// find it inside Application Config; else pull it in from the old public root; else null
+async function adopt(name, mime, app, root) {
+  const f = await find(name, app, mime); if (f) return f
+  const o = await find(name, root, mime); if (!o) return null
+  await move(o.id, root, app); return o
+}
 export async function init() {
+  const app = await ensureAppConfig()
   let root = await find('Frame AI', null, FOLDER)
   if (!root) {
     root = await mkFolder('Frame AI')
     await api(`${D}/files/${root.id}/permissions`, { method: 'POST', body: JSON.stringify({ type: 'anyone', role: 'reader' }) }) // public, view-only
   }
-  const ps = await find('Projects', root.id, SHEET)
-  const projectsSheet = ps ? ps.id : await mkSheet('Projects', root.id, [{ title: 'Projects', header: [] }])
+  const ps = await adopt('Projects', SHEET, app.id, root.id)
+  const projectsSheet = ps ? ps.id : await mkSheet('Projects', app.id, [{ title: 'Projects', header: [] }])
   await put(projectsSheet, 'Projects!A1:G1', [['Project Name', 'Folder ID', 'Sheet ID', 'Created', 'Videos Folder ID', 'Global Folder ID', 'Status']])
-  const sc = await ensureFolder('Scene', root.id)
+  let pf = await find('Projects', root.id, FOLDER)
+  if (!pf) {   // first run of this layout: bring existing project folders into Projects/
+    pf = await mkFolder('Projects', root.id)
+    for (const r of await read(projectsSheet, 'Projects!A2:G')) if (r[1]) await move(r[1], root.id, pf.id).catch(() => {})
+  }
+  const sc = (await adopt('Scene', FOLDER, app.id, root.id)) || await mkFolder('Scene', app.id)
   const ss = await find('Scene Videos', sc.id, SHEET)
   const sceneSheet = ss ? ss.id : await mkSheet('Scene Videos', sc.id, [{ title: 'Scenes', header: SCENE_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
   await put(sceneSheet, 'Scenes!A1:G1', [SCENE_HEAD])
-  const rq = await ensureFolder('Requirements', root.id)
+  const rq = (await adopt('Requirements', FOLDER, app.id, root.id)) || await mkFolder('Requirements', app.id)
   let rs = await find('Requirements', rq.id, SHEET), reqSheet = rs?.id
   if (!reqSheet) {
     reqSheet = await mkSheet('Requirements', rq.id, [{ title: 'Requirements', header: REQ_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
     await put(reqSheet, 'Requirements!A2:G4', REQ_SEED)
   }
-  return { rootId: root.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
+  return { rootId: root.id, appId: app.id, projectsFolderId: pf.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
 }
 
 // ---------- big projects (teacher / series) ----------
@@ -94,7 +117,7 @@ export async function listProjects(w) {
   return (await read(w.projectsSheet, 'Projects!A2:G')).map(r => ({ name: r[0], folderId: r[1], sheetId: r[2], created: r[3], videosId: r[4], globalId: r[5], status: r[6] }))
 }
 export async function createProject(w, name) {
-  const f = await mkFolder(name, w.rootId)
+  const f = await mkFolder(name, w.projectsFolderId)
   const [videos, global] = await Promise.all([mkFolder('Videos', f.id), mkFolder('_Global', f.id)])
   await Promise.all(GLOBAL.map(g => mkFolder(g[0], global.id)))
   const sheetId = await mkSheet(`${name} - Record`, f.id, [
@@ -233,5 +256,22 @@ export async function fulfilWithLink(w, req, url, desc) {
   await log(w.reqSheet, 'Requirement done', `${req.name} <- ${y.link}`)
 }
 
+// ---------- read an uploaded spreadsheet file (xlsx, xls, csv, ods) ----------
+// Drive converts the file to a temporary Google Sheet, we read the cells, then delete the temporary copy.
+const SHEET_TYPES = { csv: 'text/csv', tsv: 'text/tab-separated-values', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel', ods: 'application/vnd.oasis.opendocument.spreadsheet' }
+export async function readTable(file) {
+  const type = SHEET_TYPES[file.name.split('.').pop().toLowerCase()]
+  if (!type) throw new Error('Upload an Excel (.xlsx / .xls), CSV or ODS file')
+  const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Upload-Content-Type': type }, body: JSON.stringify({ name: `import ${file.name}`, mimeType: SHEET }) })
+  if (!r.ok) throw new Error('Could not start reading the file')
+  const up = await fetch(r.headers.get('Location'), { method: 'PUT', body: file })
+  if (!up.ok) throw new Error('Could not read that file')
+  const id = (await up.json()).id
+  try {
+    const title = (await api(`${S}/${id}?fields=sheets.properties.title`)).sheets[0].properties.title
+    return await read(id, `'${title.replace(/'/g, "''")}'`)
+  } finally { api(`${D}/files/${id}`, { method: 'DELETE' }).catch(() => {}) }
+}
+
 // internals shared with playlist.js (config files, playlist sheet, thumbnails)
-export { api, find, mkFolder, ensureFolder, put, read, append, log, safe, now, upload, delRow, enc, D, S }
+export { api, find, move, mkFolder, ensureFolder, put, read, append, log, safe, now, upload, delRow, enc, D, S }
