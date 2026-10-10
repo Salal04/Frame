@@ -7,6 +7,7 @@ import Production from './Production.jsx'
 import { Narrator, ThumbStudio, ProjectSettings, ControlRoom } from './Studio.jsx'
 import { Confirm, GlobalAssets, Requirements, Scenes } from './Classic.jsx'
 
+
 export default function App() {
   const [w, setW] = useState(null), [view, setView] = useState({ t: 'home' }), [busy, setBusy] = useState(''), [err, setErr] = useState('')
   const run = async (msg, fn) => { setBusy(msg); setErr(''); try { return await fn() } catch (e) { setErr(e.message) } finally { setBusy('') } }
