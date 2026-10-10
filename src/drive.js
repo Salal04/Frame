@@ -16,6 +16,25 @@ export function signIn() {
     }).requestAccessToken({ prompt: '' })
   })
 }
+// Backend link: the browser gets a one-time code, /api/exchange (holds the client secret) turns it into a refresh token.
+export function connectBackend() {
+  return new Promise((res, rej) => {
+    if (!window.google) return rej(new Error('Google script not loaded yet'))
+    window.google.accounts.oauth2.initCodeClient({
+      client_id: CID, scope: 'https://www.googleapis.com/auth/drive.file', ux_mode: 'popup',
+      error_callback: e => rej(new Error(e?.type === 'popup_closed' ? 'Connect was cancelled' : e?.message || 'Connect failed')),
+      callback: async r => {
+        if (!r.code) return rej(new Error(r.error || 'Connect failed'))
+        try {
+          const x = await fetch('/api/exchange', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: r.code }) })
+          const j = await x.json().catch(() => ({}))
+          if (!x.ok || !j.refresh_token) throw new Error(j.error || 'Google did not return a refresh token. Remove Frame AI at myaccount.google.com/permissions and connect again.')
+          res(j.refresh_token)
+        } catch (e) { rej(e) }
+      },
+    }).requestCode()
+  })
+}
 async function api(url, opt = {}) {
   const r = await fetch(url, { ...opt, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...opt.headers } })
   if (!r.ok) throw new Error((await r.text()).slice(0, 300))
@@ -88,12 +107,17 @@ async function adopt(name, mime, app, root) {
   const o = await find(name, root, mime); if (!o) return null
   await move(o.id, root, app); return o
 }
+// Older workspaces were shared as "anyone with the link"; that exposed frame_config.json. Remove any public permission.
+async function lockDown(id) {
+  try {
+    const r = await api(`${D}/files/${id}/permissions?fields=permissions(id,type)`)
+    for (const x of r.permissions || []) if (x.type === 'anyone') await api(`${D}/files/${id}/permissions/${x.id}`, { method: 'DELETE' })
+  } catch { /* not fatal: the folder is still only reachable by its owner unless it was shared */ }
+}
 export async function init() {
   let root = await find('Frame AI', null, FOLDER)
-  if (!root) {
-    root = await mkFolder('Frame AI')
-    await api(`${D}/files/${root.id}/permissions`, { method: 'POST', body: JSON.stringify({ type: 'anyone', role: 'reader' }) }) // anyone with the link can view; you edit from your own account
-  }
+  if (!root) root = await mkFolder('Frame AI')   // stays private: frame_config.json (API keys) lives inside
+  await lockDown(root.id)
   const app = await ensureAppConfig(root.id)
   const ps = await adopt('Projects', SHEET, app.id, root.id)
   const projectsSheet = ps ? ps.id : await mkSheet('Projects', app.id, [{ title: 'Projects', header: [] }])
