@@ -14,7 +14,8 @@ export default async function handler(req, res) {
   const code = typeof req.body === 'object' ? req.body?.code : (() => { try { return JSON.parse(req.body).code } catch { return '' } })()
   if (!code || typeof code !== 'string') return res.status(400).json({ error: 'Missing code' })
   const id = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID, secret = process.env.GOOGLE_CLIENT_SECRET
-  if (!id || !secret) return res.status(500).json({ error: 'Server is missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET' })
+  const missing = [!id && 'GOOGLE_CLIENT_ID', !secret && 'GOOGLE_CLIENT_SECRET'].filter(Boolean)
+  if (missing.length) return res.status(500).json({ error: `Server env var missing: ${missing.join(', ')} (set it for Production in Vercel, then redeploy)` })
 
   const r = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
