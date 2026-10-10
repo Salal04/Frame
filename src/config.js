@@ -26,8 +26,6 @@ export const GLOBAL_DEFAULTS = {
   },
   limits: { rpm: 5, tts_rpm: 4, max_wait: 240, tts_group_scenes: 4, tts_group_chars: 4000, scene_batch: 4 },
   tools: { urdu_font: 'Noto Naskh Arabic', workdir: 'build', output_dir: 'output', tts_cache_dir: 'tts_cache' },
-  // Which project's videos get built in which order, who is paused, who waits between videos. Edited in the Production tab.
-  production: { order: 'rotate', projects: [] },
 }
 
 export const GLOBAL_FIELDS = [
