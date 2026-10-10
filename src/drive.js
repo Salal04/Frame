@@ -3,6 +3,7 @@ const CID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 const D = 'https://www.googleapis.com/drive/v3', S = 'https://sheets.googleapis.com/v4/spreadsheets'
 export const FOLDER = 'application/vnd.google-apps.folder', SHEET = 'application/vnd.google-apps.spreadsheet'
 let token = null
+export const getToken = () => token
 const enc = encodeURIComponent
 const now = () => new Date().toISOString().replace('T', ' ').slice(0, 19)
 
@@ -103,6 +104,7 @@ export async function createProject(w, name) {
     { title: 'Log', header: ['Time', 'Action', 'Details'] }])
   await append(w.projectsSheet, 'Projects', [name, f.id, sheetId, now(), videos.id, global.id, 'Created'])
   await log(sheetId, 'Project created', `Folder ${f.id}`)
+  return { name, folderId: f.id, sheetId, videosId: videos.id, globalId: global.id }
 }
 export async function deleteProject(w, p) {
   await api(`${D}/files/${p.folderId}`, { method: 'DELETE' }) // folder + every video + global assets
@@ -230,3 +232,6 @@ export async function fulfilWithLink(w, req, url, desc) {
   await tick(w, req, [y.title, '', now(), y.link])
   await log(w.reqSheet, 'Requirement done', `${req.name} <- ${y.link}`)
 }
+
+// internals shared with playlist.js (config files, playlist sheet, thumbnails)
+export { api, find, mkFolder, ensureFolder, put, read, append, log, safe, now, upload, delRow, enc, D, S }
