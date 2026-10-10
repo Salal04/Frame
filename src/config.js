@@ -26,6 +26,8 @@ export const GLOBAL_DEFAULTS = {
   },
   limits: { rpm: 5, tts_rpm: 4, max_wait: 240, tts_group_scenes: 4, tts_group_chars: 4000, scene_batch: 4 },
   tools: { urdu_font: 'Noto Naskh Arabic', workdir: 'build', output_dir: 'output', tts_cache_dir: 'tts_cache' },
+  // Which project's videos get built in which order, who is paused, who waits between videos. Edited in the Production tab.
+  production: { order: 'rotate', projects: [] },
 }
 
 export const GLOBAL_FIELDS = [
@@ -57,15 +59,16 @@ export const LIST_INFO = {
 // ---------------------------------------------------------------- PROJECT (playlist)
 export const LANGS = [['en', 'English'], ['ur', 'Urdu']]
 export const PROJECT_DEFAULTS = {
-  language: 'en', screen_language: '', audience: 'curious beginners', minutes: 3,
+  language: 'en', screen_language: '', description: '', audience: 'curious beginners', minutes: 3,
   voice: 'Kore', tts_style: 'calm, clear and friendly, like a good teacher', tts_engine: 'auto',
   tts_model: '', tts_strict: false, cloud_voices: '',
   scene_sec: 15, chapter_min: 2, min_steps_per_sentence: 2, max_scenes: 60, quality: 'medium', retries: 2, allow_latex: false,
-  thumb: { templateId: '', templateName: '', font: 'Fredoka', size: 110, color: '#ffffff', stroke: '#2a2550', align: 'left', x: 6, y: 50, maxWidth: 58, shade: true },
+  thumb: { templateId: '', templateName: '', templateLink: '', font: 'Fredoka', size: 110, color: '#ffffff', stroke: '#2a2550', align: 'left', x: 6, y: 50, maxWidth: 58, shade: true },
 }
 export const PROJECT_FIELDS = [
   ['language', 'Narration language', 'select', 'Script, voice and audio.', LANGS],
   ['screen_language', 'On-screen text language', 'select', '', [['', 'Same as narration'], ...LANGS]],
+  ['description', 'Default description (added to every video)', 'textarea', "Goes under each video's own description. A video with no description of its own gets just this one."],
   ['audience', 'Audience', 'text', 'Sets the level of the script.'],
   ['minutes', 'Default length (minutes)', 'number', 'Used when a video row leaves Minutes empty.'],
   ['scene_sec', 'Seconds per scene', 'number', 'Bigger = fewer scenes = fewer renders.'],
@@ -77,7 +80,17 @@ export const PROJECT_FIELDS = [
   ['allow_latex', 'Allow LaTeX (never with Urdu screen text)', 'bool', '']]
 
 // ---------------------------------------------------------------- narrator
-export const STATUSES = ['Draft', 'Ready', 'Rendering', 'Done', 'Failed']
+export const STATUSES = ['Waiting', 'In Process', 'Completed', 'Uploaded', 'Failed']   // the backend moves a video along this list
+const norm = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
+export const normStatus = s => {   // also understands the old words (Draft/Ready/Rendering/Done)
+  const k = norm(s)
+  if (!k || /^(waiting|draft|ready|queued|pending)$/.test(k)) return 'Waiting'
+  if (/process|progress|render|running/.test(k)) return 'In Process'
+  if (/upload|publish/.test(k)) return 'Uploaded'
+  if (/complete|done|finish/.test(k)) return 'Completed'
+  if (/fail|error/.test(k)) return 'Failed'
+  return 'Waiting'
+}
 export const STYLE_PRESETS = [
   'calm, clear and friendly, like a good teacher', 'upbeat and energetic, like a favourite YouTube explainer',
   'warm and slow, like a bedtime storyteller', 'serious and steady, like a documentary narrator',
@@ -99,10 +112,52 @@ export const ttsNote = m => /lite/.test(m) ? 'Lite: lighter, bigger free daily a
 
 // ---------------------------------------------------------------- playlist sheet (header name -> field)
 export const PLAYLIST_COLS = [
-  ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Minutes', 'minutes'], ['Status', 'status'],
+  ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
   ['Audience', 'audience'], ['Language', 'language'], ['Screen Language', 'screen_language'], ['Voice', 'voice'],
   ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Extra Config (JSON)', 'extra'],
   ['Output Link', 'output'], ['Notes', 'notes'], ['Updated', 'updated']]
+
+// ---------------------------------------------------------------- uploading a sheet into the Playlist sheet
+const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', length: 'Minutes', duration: 'Minutes',
+  desc: 'Description', videodescription: 'Description', thumbnail: 'Thumbnail Link', thumb: 'Thumbnail Link', thumbnailurl: 'Thumbnail Link', thumblink: 'Thumbnail Link',
+  thumbtext: 'Thumbnail Text', extra: 'Extra Config (JSON)', extraconfig: 'Extra Config (JSON)', output: 'Output Link', link: 'Output Link', no: '#', num: '#', number: '#', order: '#' }
+const CANON = Object.fromEntries(PLAYLIST_COLS.filter(c => c[0] !== '#').map(([h]) => [norm(h), h]))
+export const canonHeader = h => { const t = String(h ?? '').trim(); if (!t) return null; if (t === '#') return '#'; return CANON[norm(t)] || ALIAS[norm(t)] || null }
+
+// Compare the uploaded table with the sheet: which columns match, which are new (they get ADDED to the sheet), which standard ones the file lacks.
+export function analyzeTable(head, table) {
+  const seen = new Set()
+  const cols = (table[0] || []).map((h, j) => {
+    const src = String(h ?? '').trim(); if (!src) return { j, src, name: null, known: false }
+    let name = canonHeader(src), known = !!name
+    if (!name || seen.has(name)) { name = src; known = false }
+    seen.add(name); return { j, src, name, known }
+  })
+  const names = cols.filter(c => c.name).map(c => c.name)
+  const skip = ['#', 'Updated']
+  return {
+    cols, names,
+    matched: cols.filter(c => c.known && !skip.includes(c.name)).map(c => c.name),
+    absent: PLAYLIST_COLS.map(c => c[0]).filter(h => !skip.includes(h) && !names.includes(h)),   // standard columns the file does not have: left empty / default
+    added: [...new Set(names.filter(n => !head.includes(n)))],                                       // columns the sheet does not have yet: appended to the sheet
+    extras: cols.filter(c => c.name && !c.known).map(c => c.name),
+    hasKey: names.includes('Video Title') || names.includes('Topic / Prompt'),
+    count: table.slice(1).filter(r => cols.some(c => (c.name === 'Video Title' || c.name === 'Topic / Prompt') && String(r[c.j] ?? '').trim())).length,
+  }
+}
+// One array per video, aligned to `head` (the final sheet header). Status defaults to Waiting, # continues after `base`.
+export function importRows(head, a, table, base, stamp) {
+  const out = []
+  table.slice(1).forEach(r => {
+    const raw = {}; a.cols.forEach(c => { if (c.name) raw[c.name] = String(r[c.j] ?? '').trim() })
+    const topic = raw['Topic / Prompt'] || '', title = raw['Video Title'] || ''
+    if (!title && !topic) return
+    raw['Video Title'] = title || topic.slice(0, 60); raw['Topic / Prompt'] = topic || title
+    raw['Status'] = normStatus(raw['Status']); raw['#'] = String(base + out.length + 1); raw['Updated'] = stamp
+    out.push(head.map(h => raw[h] ?? ''))
+  })
+  return out
+}
 
 // ---------------------------------------------------------------- merge the three levels into one VideoConfig
 export function resolveJob(g, p, v, playlist) {
@@ -110,7 +165,14 @@ export function resolveJob(g, p, v, playlist) {
   if (v.extra?.trim()) { try { extra = JSON.parse(v.extra) } catch { throw new Error(`Row ${v.row} (${v.title}): Extra Config is not valid JSON`) } }
   const pin = p.tts_model, rest = csv(g.models.tts).filter(x => x !== pin)
   const tts = p.tts_strict && pin ? [pin] : [...(pin ? [pin] : []), ...rest]   // a pinned model keeps the voice identical across the playlist
+  const dv = (v.description || '').trim(), dp = (p.description || '').trim(), t = p.thumb || {}, own = (v.thumbLink || '').trim()
+  const title_text = (v.thumbText || v.title || '').trim()
+  // own thumbnail wins; otherwise the backend writes the title on the project's default template
+  const thumbnail = own ? { source: 'video', url: own }
+    : { source: t.templateId ? 'default_template' : 'plain_background', template_url: t.templateLink || '', template_file_id: t.templateId || '', title_text,
+        font: t.font, size: t.size, color: t.color, stroke: t.stroke, align: t.align, x: t.x, y: t.y, max_width: t.maxWidth, shade: t.shade }
   const cfg = {
+    description: [dv, dp].filter(Boolean).join('\n\n'), description_video: dv, description_project: dp, thumbnail,
     topic: (v.topic || v.title || '').trim(), minutes: +v.minutes || +p.minutes || 3, audience: v.audience || p.audience,
     language: v.language || p.language, screen_language: v.screen_language || p.screen_language,
     voice: v.voice || p.voice, tts_style: p.tts_style, tts_engine: p.tts_engine, cloud_voices: p.cloud_voices,
@@ -128,6 +190,63 @@ export function buildJobs(g, p, playlist, rows, all = false) {
   const gem = csv(g.keys.gemini), tts = csv(g.keys.tts).length ? csv(g.keys.tts) : gem
   return {
     playlist, exported: new Date().toISOString(), keys: { gemini: gem, tts, cloudTts: csv(g.keys.cloudTts) }, tts_cache_dir: g.tools.tts_cache_dir,
-    jobs: rows.filter(r => all || r.status === 'Ready').map(r => ({ row: r.row, title: r.title, config: resolveJob(g, p, r, playlist) })),
+    jobs: rows.filter(r => all || r.status === 'Waiting').map(r => ({ row: r.row, title: r.title, config: resolveJob(g, p, r, playlist) })),
+  }
+}
+
+// ---------------------------------------------------------------- PRODUCTION (all projects together)
+export const byOrder = (a, b) => (+a.order || a.row) - (+b.order || b.row)
+const NEW_PLAN_ENTRY = p => ({ id: p.folderId, name: p.name, state: 'active', perTurn: 1, pauseMin: 0, pauseEvery: 1 })
+
+// Keep the saved plan and the real list of projects in step: new projects join at the end, deleted ones leave.
+export function syncPlan(plan, projects) {
+  const saved = plan?.projects || [], ids = new Set(projects.map(p => p.folderId)), have = new Set(saved.map(x => x.id))
+  return {
+    order: plan?.order === 'sequential' ? 'sequential' : 'rotate',
+    projects: [...saved.filter(x => ids.has(x.id)).map(x => ({ ...x, name: projects.find(p => p.folderId === x.id).name })), ...projects.filter(p => !have.has(p.folderId)).map(NEW_PLAN_ENTRY)],
+  }
+}
+
+// waiting = { projectId: [Waiting rows] }. Returns the exact build order.
+//   rotate     -> A, B, C, A, B, C ...   (perTurn videos from each project per round)
+//   sequential -> every A, then every B ...
+// A paused project is skipped. pauseAfterMin = how long to wait after that video before starting the next one.
+export function buildQueue(plan, waiting) {
+  const ps = plan.projects.filter(x => x.state === 'active'), left = {}, made = {}, out = []
+  ps.forEach(x => { left[x.id] = [...(waiting[x.id] || [])].sort(byOrder) })
+  const take = (x, n) => {
+    for (let i = 0; i < n && left[x.id].length; i++) {
+      const row = left[x.id].shift(), k = made[x.id] = (made[x.id] || 0) + 1, every = Math.max(1, +x.pauseEvery || 1)
+      out.push({ projectId: x.id, playlist: x.name, row, pauseAfterMin: +x.pauseMin > 0 && k % every === 0 ? +x.pauseMin : 0 })
+    }
+  }
+  if (plan.order === 'sequential') ps.forEach(x => take(x, Infinity))
+  else while (ps.some(x => left[x.id].length)) ps.forEach(x => take(x, Math.max(1, +x.perTurn || 1)))
+  if (out.length) out[out.length - 1].pauseAfterMin = 0
+  return out
+}
+export const waitingOf = data => Object.fromEntries(data.map(d => [d.p.folderId, d.rows.filter(r => r.status === 'Waiting')]))
+export const countStatus = rows => Object.fromEntries(STATUSES.map(s => [s, rows.filter(r => r.status === s).length]))
+
+// production_record.json: what has been made, what is running, what comes next.
+export function makeRecord(plan, data, queue) {
+  const all = data.flatMap(d => d.rows.map(r => ({ playlist: d.p.name, row: r.row, title: r.title, status: r.status, output: r.output || '', updated: r.updated || '' })))
+  const of = (...s) => all.filter(r => s.includes(r.status))
+  const sum = Object.fromEntries(STATUSES.map(s => [s, of(s).length]))
+  return {
+    order: plan.order,
+    next: queue[0] ? { playlist: queue[0].playlist, row: queue[0].row.row, title: queue[0].row.title } : null,
+    in_process: of('In Process'), completed: of('Completed', 'Uploaded'), failed: of('Failed'),
+    queue: queue.map((q, i) => ({ position: i + 1, playlist: q.playlist, row: q.row.row, title: q.row.title, pause_after_min: q.pauseAfterMin })),
+    paused_projects: plan.projects.filter(x => x.state === 'paused').map(x => x.name), summary: sum,
+  }
+}
+
+// One jobs file for every project, already in build order.
+export function buildJobsAll(g, plan, data, queue) {
+  const gem = csv(g.keys.gemini), tts = csv(g.keys.tts).length ? csv(g.keys.tts) : gem, by = Object.fromEntries(data.map(d => [d.p.folderId, d]))
+  return {
+    exported: new Date().toISOString(), order: plan.order, keys: { gemini: gem, tts, cloudTts: csv(g.keys.cloudTts) }, tts_cache_dir: g.tools.tts_cache_dir,
+    jobs: queue.map((q, i) => ({ position: i + 1, playlist: q.playlist, row: q.row.row, title: q.row.title, pause_after_min: q.pauseAfterMin, config: resolveJob(g, by[q.projectId].cfg, q.row, q.playlist) })),
   }
 }
