@@ -3,16 +3,16 @@ import * as G from './drive.js'
 import * as P from './playlist.js'
 import { STATUSES, syncPlan, buildQueue, waitingOf, countStatus, makeRecord, buildJobsAll } from './config.js'
 
-// Application level: one plan for ALL projects. Saved in Application Config / frame_config.json (production),
-// and the record of what is made / what is next is written to Application Config / production_record.json.
+// Application level: one plan for ALL projects, kept in the sheet "Production Plan" (Application Config folder), so it can be
+// edited here or directly in Drive. "Production Record" (same folder) shows what is made, running and next.
 export default function Production({ w, run }) {
   const [data, setData] = useState(null), [plan, setPlan] = useState(null), [dirty, setDirty] = useState(false), [sel, setSel] = useState([]), [pz, setPz] = useState({ min: 5, every: 1 }), f = useRef()
   const load = () => run('Reading every project…', async () => {
     const ps = await G.listProjects(w), out = []
     for (const p of ps) { const cfg = await P.loadProject(p); out.push({ p, cfg, rows: await P.loadVideos(p) }) }
-    const pl = syncPlan(w.g.cfg.production, ps)
-    setData(out); setPlan(pl); setDirty(JSON.stringify(pl) !== JSON.stringify(w.g.cfg.production))
-    await P.syncRecord(w.g, pl, out)
+    const saved = await P.loadPlan(w), pl = syncPlan(saved, ps)
+    setData(out); setPlan(pl); setDirty(JSON.stringify(pl) !== JSON.stringify(saved))
+    await P.syncRecord(w, pl, out)
   })
   useEffect(() => { load() }, [])
   const queue = useMemo(() => plan && data ? buildQueue(plan, waitingOf(data)) : [], [plan, data])
@@ -22,7 +22,7 @@ export default function Production({ w, run }) {
   const edit = (ids, patch) => { setPlan({ ...plan, projects: plan.projects.map(x => ids.includes(x.id) ? { ...x, ...patch } : x) }); setDirty(true) }
   const move = (i, d) => { const a = [...plan.projects], j = i + d; if (j < 0 || j >= a.length) return;[a[i], a[j]] = [a[j], a[i]]; setPlan({ ...plan, projects: a }); setDirty(true) }
   const toggle = id => setSel(sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id])
-  const save = async () => { await P.saveGlobal(w.g, { ...w.g.cfg, production: plan }); setDirty(false); await P.syncRecord(w.g, plan, data) }
+  const save = async () => { await P.savePlan(w, plan); setDirty(false); await P.syncRecord(w, plan, data) }
   const cnt = id => countStatus(data.find(d => d.p.folderId === id)?.rows || [])
   const download = o => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(o, null, 2)], { type: 'application/json' })); a.download = 'frame_jobs_all.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000) }
   const exportAll = () => run('Building the jobs file…', async () => {
@@ -39,7 +39,7 @@ export default function Production({ w, run }) {
   const total = k => data.reduce((a, d) => a + d.rows.filter(r => r.status === k).length, 0)
 
   return <main className="page"><h2>Production</h2>
-    <p className="muted">One plan for all projects: who goes first, who is paused, who waits between videos. It is saved in <b>Application Config</b> (frame_config.json) and the backend follows it. What was made and what is next is kept in <b>production_record.json</b> in the same folder.</p>
+    <p className="muted">One plan for all projects: who goes first, who is paused, who waits between videos. It is saved in the sheet <b>Production Plan</b> and what was made and what is next is listed in <b>Production Record</b>, both in the <b>Application Config</b> folder. You can change the plan here or directly in Drive.</p>
     <div className="stats">{STATUSES.map(s => <span key={s}><b>{total(s)}</b>{s.toLowerCase()}</span>)}</div>
 
     <h3>Order</h3>
@@ -64,7 +64,9 @@ export default function Production({ w, run }) {
     <div className="row"><button className="cta sm" disabled={!dirty} onClick={() => run('Saving the plan…', save)}>{dirty ? 'Save plan' : 'Plan saved'}</button>
       <button className="ghost" onClick={load}>Refresh</button><button className="ghost" onClick={exportAll}>Download jobs for backend (all projects)</button>
       <input ref={f} type="file" accept=".json,application/json" hidden onChange={importRes} /><button className="ghost" onClick={() => f.current.click()}>Import results</button>
-      <a className="ghost" target="_blank" rel="noreferrer" href={`https://drive.google.com/drive/folders/${w.appId}`}>Open Application Config</a></div>
+      <a className="ghost" target="_blank" rel="noreferrer" href={`https://drive.google.com/drive/folders/${w.appId}`}>Open Application Config</a>
+      {w.planSheet && <a className="ghost" target="_blank" rel="noreferrer" href={`https://docs.google.com/spreadsheets/d/${w.planSheet}`}>Open plan sheet</a>}
+      {w.recSheet && <a className="ghost" target="_blank" rel="noreferrer" href={`https://docs.google.com/spreadsheets/d/${w.recSheet}`}>Open record sheet</a>}</div>
 
     <h3>Next up</h3>
     {queue[0] ? <p className="next"><b>{queue[0].playlist}</b> · #{queue[0].row.order || queue[0].row.row - 1} {queue[0].row.title}</p> : <p className="muted">Nothing is waiting in an active project.</p>}
