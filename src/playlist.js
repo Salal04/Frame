@@ -22,7 +22,7 @@ async function writeJson(parent, name, data, fileId) {
   return (await upload(new File([body], name, { type: 'application/json' }), parent)).id
 }
 
-// ---------- global config: one file for every project, in the private Application Config folder (NOT inside the public Frame AI folder) ----------
+// ---------- global config: one file for every project, in the Application Config folder (private to the owner; never share it, it holds API keys) ----------
 export async function loadGlobal(appId) {
   const { file, data } = await readJson(appId, 'frame_config.json')
   const cfg = mergeDeep(GLOBAL_DEFAULTS, data || {})
