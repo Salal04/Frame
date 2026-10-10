@@ -141,12 +141,50 @@ export async function uploadVideoThumb(p, file, row) {
   return (await upload(new File([file], `${String(row.order || row.row).padStart(2, '0')}-${(row.title || 'video').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}.${ext}`, { type: file.type }), own.id)).webViewLink
 }
 
-// ---------- production record (Application Config / production_record.json) ----------
-// Written only when something actually changed, so opening the tab does not rewrite it every time.
-export async function syncRecord(g, plan, data) {
-  const rec = makeRecord(plan, data, buildQueue(plan, waitingOf(data)))
-  const { file, data: old } = await readJson(g.dirId, 'production_record.json')
-  const { updated_at, ...prev } = old || {}
-  if (JSON.stringify(prev) !== JSON.stringify(rec)) await writeJson(g.dirId, 'production_record.json', { updated_at: new Date().toISOString(), ...rec }, file)
+// ---------- production plan + record: two Google Sheets inside Application Config, editable here or straight in Drive ----------
+const PLAN_HEAD = ['Order', 'Project', 'State', 'Videos Per Turn', 'Pause (min)', 'Pause After Every N Videos', 'Folder ID (do not edit)']
+async function planSheet(w) {
+  if (w.planSheet) return w.planSheet
+  const f = await find('Production Plan', w.appId, G.SHEET)
+  if (f) return (w.planSheet = f.id)
+  const id = await G.mkSheet('Production Plan', w.appId, [{ title: 'Plan', header: PLAN_HEAD }, { title: 'Settings', header: ['Setting', 'Value'] }])
+  await api(`${S}/${id}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests: [{ setDataValidation: { range: { sheetId: 0, startRowIndex: 1, startColumnIndex: 2, endColumnIndex: 3 }, rule: { condition: { type: 'ONE_OF_LIST', values: ['Active', 'Paused'].map(userEnteredValue => ({ userEnteredValue })) }, showCustomUi: true, strict: false } } }] }) })
+  await put(id, 'Settings!A2', [['Order', 'Take turns'], ['Order choices', 'Take turns  |  One project at a time']])
+  return (w.planSheet = id)
+}
+export async function loadPlan(w) {
+  const id = await planSheet(w), rows = await read(id, 'Plan!A2:G'), set = await read(id, 'Settings!A2:B')
+  const ord = String(set.find(r => r[0] === 'Order')?.[1] || '').toLowerCase()
+  return {
+    order: /one|sequen/.test(ord) ? 'sequential' : 'rotate',
+    projects: rows.filter(r => r[6]).sort((a, b) => (+a[0] || 9999) - (+b[0] || 9999)).map(r => ({ id: r[6], name: r[1] || '', state: /pause/i.test(r[2] || '') ? 'paused' : 'active', perTurn: Math.max(1, +r[3] || 1), pauseMin: Math.max(0, +r[4] || 0), pauseEvery: Math.max(1, +r[5] || 1) })),
+  }
+}
+export async function savePlan(w, plan) {
+  const id = await planSheet(w)
+  await api(`${S}/${id}/values/${enc('Plan!A2:G')}:clear`, { method: 'POST', body: '{}' })
+  if (plan.projects.length) await put(id, 'Plan!A2', plan.projects.map((x, i) => [i + 1, safe(x.name), x.state === 'paused' ? 'Paused' : 'Active', x.perTurn, x.pauseMin, x.pauseEvery, x.id]))
+  await put(id, 'Settings!A2', [['Order', plan.order === 'sequential' ? 'One project at a time' : 'Take turns'], ['Order choices', 'Take turns  |  One project at a time']])
+}
+
+async function recordSheet(w) {
+  if (w.recSheet) return w.recSheet
+  const f = await find('Production Record', w.appId, G.SHEET)
+  if (f) return (w.recSheet = f.id)
+  return (w.recSheet = await G.mkSheet('Production Record', w.appId, [{ title: 'Record', header: ['Section', 'Position', 'Project', 'Row', 'Title', 'Status', 'Pause After (min)', 'Output', 'Updated'] }, { title: 'Summary', header: ['Item', 'Value'] }]))
+}
+// What is next, what is queued, what is running, what is finished. Rewritten from the project sheets each time.
+export async function syncRecord(w, plan, data) {
+  const rec = makeRecord(plan, data, buildQueue(plan, waitingOf(data))), id = await recordSheet(w)
+  const rows = [
+    ...rec.queue.map(q => [q.position === 1 ? 'Next up' : 'Queue', q.position, q.playlist, q.row, q.title, 'Waiting', q.pause_after_min || '', '', '']),
+    ...rec.in_process.map(r => ['In process', '', r.playlist, r.row, r.title, r.status, '', r.output, r.updated]),
+    ...rec.completed.map(r => ['Made', '', r.playlist, r.row, r.title, r.status, '', r.output, r.updated]),
+    ...rec.failed.map(r => ['Failed', '', r.playlist, r.row, r.title, r.status, '', r.output, r.updated])].map(r => r.map(c => safe(String(c ?? ''))))
+  await api(`${S}/${id}/values/${enc('Record!A2:I')}:clear`, { method: 'POST', body: '{}' })
+  if (rows.length) await put(id, 'Record!A2', rows)
+  await api(`${S}/${id}/values/${enc('Summary!A2:B')}:clear`, { method: 'POST', body: '{}' })
+  await put(id, 'Summary!A2', [['Updated', now()], ['Order', plan.order === 'sequential' ? 'One project at a time' : 'Take turns'],
+    ['Next up', rec.next ? `${rec.next.playlist}: ${rec.next.title}` : 'nothing waiting'], ...Object.entries(rec.summary), ['Paused projects', rec.paused_projects.join(', ') || 'none']].map(r => r.map(c => safe(String(c)))))
   return rec
 }
