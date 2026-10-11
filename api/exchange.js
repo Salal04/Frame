@@ -11,7 +11,8 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' })
 
-  const code = typeof req.body === 'object' ? req.body?.code : (() => { try { return JSON.parse(req.body).code } catch { return '' } })()
+  const body = req.body && typeof req.body === 'object' ? req.body : (() => { try { return JSON.parse(req.body) || {} } catch { return {} } })()
+  const code = body.code
   if (!code || typeof code !== 'string') return res.status(400).json({ error: 'Missing code' })
   const id = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID, secret = process.env.GOOGLE_CLIENT_SECRET
   const missing = [!id && 'GOOGLE_CLIENT_ID', !secret && 'GOOGLE_CLIENT_SECRET'].filter(Boolean)
@@ -24,6 +25,13 @@ export default async function handler(req, res) {
   const j = await r.json().catch(() => ({}))
   if (!r.ok) return res.status(400).json({ error: j.error_description || j.error || 'Google rejected the code' })
   if (!j.refresh_token) return res.status(400).json({ error: 'Google did not return a refresh token. Remove Frame AI at myaccount.google.com/permissions and connect again.' })
+  // YouTube connect only: look up which channel the login belongs to, here, so the access token never reaches the browser
+  let channel = null
+  if (body.profile === 'youtube' && j.access_token) {
+    const c = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', { headers: { Authorization: `Bearer ${j.access_token}` } }).then(x => x.json()).catch(() => null)
+    const it = c?.items?.[0]
+    if (it) channel = { id: it.id, title: it.snippet?.title || '' }
+  }
   res.setHeader('Cache-Control', 'no-store')
-  return res.status(200).json({ refresh_token: j.refresh_token })   // access token and client secret are never returned
+  return res.status(200).json({ refresh_token: j.refresh_token, ...(body.profile === 'youtube' ? { channel } : {}) })   // access token and client secret are never returned
 }
