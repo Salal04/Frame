@@ -18,11 +18,11 @@ function Field({ d, value, onChange }) {
 }
 
 // ---------- playlist defaults (project_config.json) ----------
-export function ProjectSettings({ cfg, save, run }) {
+export function ProjectSettings({ cfg, save, run, single }) {
   const [d, setD] = useState(cfg), [ok, setOk] = useState(false)
-  return <section><p className="muted">Starting point for every video in this playlist. A video row can override the main ones.</p>
-    <div className="cols">{PROJECT_FIELDS.map(f => <Field key={f[0]} d={f} value={d[f[0]]} onChange={v => { setD({ ...d, [f[0]]: v }); setOk(false) }} />)}</div>
-    <button className="cta sm" onClick={() => run('Saving playlist settings…', async () => { await save(d); setOk(true) })}>Save settings</button>
+  return <section><p className="muted">Starting point for every video in {single ? 'Singles' : 'this playlist'}. A video row can override the main ones.{single && ' Singles have no shared description.'}</p>
+    <div className="cols">{PROJECT_FIELDS.filter(f => !(single && f[0] === 'description')).map(f => <Field key={f[0]} d={f} value={d[f[0]]} onChange={v => { setD({ ...d, [f[0]]: v }); setOk(false) }} />)}</div>
+    <button className="cta sm" onClick={() => run('Saving playlist settings…', async () => { await save(single ? { ...d, description: '' } : d); setOk(true) })}>Save settings</button>
     {ok && <p className="ok">Saved to project_config.json</p>}</section>
 }
 

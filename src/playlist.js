@@ -1,6 +1,6 @@
 // Drive layer for the pipeline: JSON config files, the per-playlist "Playlist" sheet, thumbnails.
 import * as G from './drive.js'
-import { PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, mergeDeep, normStatus, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
+import { PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, mergeDeep, normStatus, normInput, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
 const { api, find, ensureFolder, put, read, append, log, safe, now, upload, delRow, getToken, enc, D, S } = G
 const auth = () => ({ Authorization: `Bearer ${getToken()}` })
 const colL = n => { let s = ''; for (n++; n; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s }
@@ -35,6 +35,7 @@ export async function loadProject(p) {
   const { file, data } = await readJson(p.folderId, 'project_config.json')
   const cfg = mergeDeep(PROJECT_DEFAULTS, data || {})
   p.cfgFileId = file || await writeJson(p.folderId, 'project_config.json', cfg)
+  if (p.isSingles) cfg.description = ''   // Singles never have a shared description
   return cfg
 }
 export async function saveProject(p, cfg) { p.cfgFileId = await writeJson(p.folderId, 'project_config.json', cfg, p.cfgFileId) }
@@ -73,8 +74,9 @@ export async function loadVideos(p) {
   if (!p.valDone) { p.valDone = true; await api(`${S}/${p.sheetId}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests: [statusRule(p.tabId, head.indexOf('Status'))] }) }).catch(() => {}) }   // dropdown shows the current statuses
   return v.slice(1).map((r, i) => {
     const raw = Object.fromEntries(head.map((h, j) => [h, r[j] ?? '']))
-    const o = { row: i + 2, raw }; PLAYLIST_COLS.forEach(([h, k]) => { o[k] = raw[h] ?? '' }); o.status = normStatus(o.status); return o
-  }).filter(o => o.title || o.topic)
+    const o = { row: i + 2, raw }; PLAYLIST_COLS.forEach(([h, k]) => { o[k] = raw[h] ?? '' }); o.status = normStatus(o.status)
+    o.inputType = o.inputType ? normInput(o.inputType) : (o.script ? 'Script' : 'Prompt'); return o
+  }).filter(o => o.title || o.topic || o.script)
 }
 
 export async function saveVideo(p, o) {

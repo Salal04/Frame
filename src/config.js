@@ -89,6 +89,9 @@ export const normStatus = s => {   // also understands the old words (Draft/Read
   if (/fail|error/.test(k)) return 'Failed'
   return 'Waiting'
 }
+export const INPUT_TYPES = ['Prompt', 'Script']   // Prompt = Frame writes the script from the topic. Script = you supply the finished script.
+export const MAX_SCRIPT = 49000                    // one Google Sheets cell holds at most 50,000 characters
+export const normInput = s => /script/i.test(String(s ?? '')) ? 'Script' : 'Prompt'
 export const STYLE_PRESETS = [
   'calm, clear and friendly, like a good teacher', 'upbeat and energetic, like a favourite YouTube explainer',
   'warm and slow, like a bedtime storyteller', 'serious and steady, like a documentary narrator',
@@ -110,13 +113,13 @@ export const ttsNote = m => /lite/.test(m) ? 'Lite: lighter, bigger free daily a
 
 // ---------------------------------------------------------------- playlist sheet (header name -> field)
 export const PLAYLIST_COLS = [
-  ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
+  ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
   ['Audience', 'audience'], ['Language', 'language'], ['Screen Language', 'screen_language'], ['Voice', 'voice'],
   ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Extra Config (JSON)', 'extra'],
   ['Output Link', 'output'], ['Notes', 'notes'], ['Updated', 'updated']]
 
 // ---------------------------------------------------------------- uploading a sheet into the Playlist sheet
-const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', length: 'Minutes', duration: 'Minutes',
+const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', scripttext: 'Script', voiceover: 'Script', inputtype: 'Input Type', type: 'Input Type', mode: 'Input Type', length: 'Minutes', duration: 'Minutes',
   desc: 'Description', videodescription: 'Description', thumbnail: 'Thumbnail Link', thumb: 'Thumbnail Link', thumbnailurl: 'Thumbnail Link', thumblink: 'Thumbnail Link',
   thumbtext: 'Thumbnail Text', extra: 'Extra Config (JSON)', extraconfig: 'Extra Config (JSON)', output: 'Output Link', link: 'Output Link', no: '#', num: '#', number: '#', order: '#' }
 const CANON = Object.fromEntries(PLAYLIST_COLS.filter(c => c[0] !== '#').map(([h]) => [norm(h), h]))
@@ -139,8 +142,8 @@ export function analyzeTable(head, table) {
     absent: PLAYLIST_COLS.map(c => c[0]).filter(h => !skip.includes(h) && !names.includes(h)),   // standard columns the file does not have: left empty / default
     added: [...new Set(names.filter(n => !head.includes(n)))],                                       // columns the sheet does not have yet: appended to the sheet
     extras: cols.filter(c => c.name && !c.known).map(c => c.name),
-    hasKey: names.includes('Video Title') || names.includes('Topic / Prompt'),
-    count: table.slice(1).filter(r => cols.some(c => (c.name === 'Video Title' || c.name === 'Topic / Prompt') && String(r[c.j] ?? '').trim())).length,
+    hasKey: names.includes('Video Title') || names.includes('Topic / Prompt') || names.includes('Script'),
+    count: table.slice(1).filter(r => cols.some(c => (c.name === 'Video Title' || c.name === 'Topic / Prompt' || c.name === 'Script') && String(r[c.j] ?? '').trim())).length,
   }
 }
 // One array per video, aligned to `head` (the final sheet header). Status defaults to Waiting, # continues after `base`.
@@ -148,9 +151,10 @@ export function importRows(head, a, table, base, stamp) {
   const out = []
   table.slice(1).forEach(r => {
     const raw = {}; a.cols.forEach(c => { if (c.name) raw[c.name] = String(r[c.j] ?? '').trim() })
-    const topic = raw['Topic / Prompt'] || '', title = raw['Video Title'] || ''
-    if (!title && !topic) return
-    raw['Video Title'] = title || topic.slice(0, 60); raw['Topic / Prompt'] = topic || title
+    const topic = raw['Topic / Prompt'] || '', title = raw['Video Title'] || '', script = raw['Script'] || ''
+    if (!title && !topic && !script) return
+    raw['Video Title'] = title || topic.slice(0, 60) || script.slice(0, 60); raw['Topic / Prompt'] = topic || (script ? '' : title)
+    raw['Input Type'] = raw['Input Type'] ? normInput(raw['Input Type']) : (script ? 'Script' : 'Prompt')   // a filled Script column means "I gave the script"
     raw['Status'] = normStatus(raw['Status']); raw['#'] = String(base + out.length + 1); raw['Updated'] = stamp
     out.push(head.map(h => raw[h] ?? ''))
   })
@@ -165,13 +169,15 @@ export function resolveJob(g, p, v, playlist) {
   const tts = p.tts_strict && pin ? [pin] : [...(pin ? [pin] : []), ...rest]   // a pinned model keeps the voice identical across the playlist
   const dv = (v.description || '').trim(), dp = (p.description || '').trim(), t = p.thumb || {}, own = (v.thumbLink || '').trim()
   const title_text = (v.thumbText || v.title || '').trim()
+  const isScript = normInput(v.inputType) === 'Script' && (v.script || '').trim()   // a script row with no script text falls back to its prompt
   // own thumbnail wins; otherwise the backend writes the title on the project's default template
   const thumbnail = own ? { source: 'video', url: own }
     : { source: t.templateId ? 'default_template' : 'plain_background', template_url: t.templateLink || '', template_file_id: t.templateId || '', title_text,
         font: t.font, size: t.size, color: t.color, stroke: t.stroke, align: t.align, x: t.x, y: t.y, max_width: t.maxWidth, shade: t.shade }
   const cfg = {
     description: [dv, dp].filter(Boolean).join('\n\n'), description_video: dv, description_project: dp, thumbnail,
-    topic: (v.topic || v.title || '').trim(), minutes: +v.minutes || +p.minutes || 3, audience: v.audience || p.audience,
+    input_type: isScript ? 'script' : 'prompt', script: isScript ? v.script.trim() : '',
+    topic: (v.topic || v.title || '').trim(), minutes: +v.minutes || (isScript ? '' : +p.minutes || 3), audience: v.audience || p.audience,
     language: v.language || p.language, screen_language: v.screen_language || p.screen_language,
     voice: v.voice || p.voice, tts_style: p.tts_style, tts_engine: p.tts_engine, cloud_voices: p.cloud_voices,
     light_models: csv(g.models.light).join(','), medium_models: csv(g.models.medium).join(','), code_models: csv(g.models.code).join(','), tts_models: tts.join(','),

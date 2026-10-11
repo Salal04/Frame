@@ -89,7 +89,8 @@ const REQ_SEED = [['Mosque exterior (b-roll)', 'Wide shot of a mosque at golden 
 // Drive layout (everything visible in one tree, nothing hidden):
 //   Frame AI/
 //     Application Config/  frame_config.json, Production Plan (sheet), Production Record (sheet), Projects (registry sheet), Scene/, Requirements/
-//     Projects/            one folder per project
+//     Projects/            one folder per project (a playlist: shared narrator, thumbnail style, description)
+//     Singles/             stand-alone videos, no playlist and no shared description (its own sheet, narrator and thumbnail style)
 const move = (id, from, to) => api(`${D}/files/${id}?addParents=${to}&removeParents=${from}&fields=id`, { method: 'PATCH', body: '{}' })
 async function ensureAppConfig(root) {
   const a = await find('Application Config', root, FOLDER)
@@ -127,6 +128,7 @@ export async function init() {
     pf = await mkFolder('Projects', root.id)
     for (const r of await read(projectsSheet, 'Projects!A2:G')) if (r[1]) await move(r[1], root.id, pf.id).catch(() => {})
   }
+  const singles = await ensureSingles(root.id)
   const sc = (await adopt('Scene', FOLDER, app.id, root.id)) || await mkFolder('Scene', app.id)
   const ss = await find('Scene Videos', sc.id, SHEET)
   const sceneSheet = ss ? ss.id : await mkSheet('Scene Videos', sc.id, [{ title: 'Scenes', header: SCENE_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
@@ -137,7 +139,19 @@ export async function init() {
     reqSheet = await mkSheet('Requirements', rq.id, [{ title: 'Requirements', header: REQ_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
     await put(reqSheet, 'Requirements!A2:G4', REQ_SEED)
   }
-  return { rootId: root.id, appId: app.id, projectsFolderId: pf.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
+  return { rootId: root.id, appId: app.id, singles, projectsFolderId: pf.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
+}
+
+// ---------- Singles: one folder for stand-alone videos. It behaves like a playlist that has no shared description. ----------
+async function ensureSingles(root) {
+  const f = (await find('Singles', root, FOLDER)) || await mkFolder('Singles', root)
+  const global = (await find('_Global', f.id, FOLDER)) || await mkFolder('_Global', f.id)
+  for (const g of GLOBAL) await ensureFolder(g[0], global.id)
+  const rec = await find('Singles - Record', f.id, SHEET)
+  const sheetId = rec ? rec.id : await mkSheet('Singles - Record', f.id, [
+    { title: 'Global Assets', header: ['File Name', 'Category', 'Size (MB)', 'Uploaded', 'Drive Link'] },
+    { title: 'Log', header: ['Time', 'Action', 'Details'] }])
+  return { name: 'Singles', isSingles: true, folderId: f.id, sheetId, globalId: global.id }
 }
 
 // ---------- big projects (teacher / series) ----------
@@ -282,6 +296,26 @@ export async function fulfilWithLink(w, req, url, desc) {
   const y = await sceneLink(w, url, desc, req.name)
   await tick(w, req, [y.title, '', now(), y.link])
   await log(w.reqSheet, 'Requirement done', `${req.name} <- ${y.link}`)
+}
+
+// ---------- read a script file (txt, md, srt, docx, doc, rtf, odt) as plain text ----------
+// Plain text is read in the browser. Word-type files are converted by Drive to a temporary Google Doc, exported as text, then the copy is deleted.
+const DOC_TYPES = { docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', doc: 'application/msword', rtf: 'application/rtf', odt: 'application/vnd.oasis.opendocument.text', pdf: 'application/pdf' }
+export async function readTextFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase()
+  if (['txt', 'md', 'srt', 'text'].includes(ext)) return (await file.text()).replace(/^\uFEFF/, '').trim()
+  const type = DOC_TYPES[ext]
+  if (!type) throw new Error('Upload a .txt, .md, .pdf, .docx, .doc, .rtf or .odt script file')
+  const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Upload-Content-Type': type }, body: JSON.stringify({ name: `import ${file.name}`, mimeType: 'application/vnd.google-apps.document' }) })
+  if (!r.ok) throw new Error('Could not start reading the script')
+  const up = await fetch(r.headers.get('Location'), { method: 'PUT', body: file })
+  if (!up.ok) throw new Error('Could not read that script file')
+  const id = (await up.json()).id
+  try {
+    const t = await fetch(`${D}/files/${id}/export?mimeType=text/plain`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!t.ok) throw new Error('Could not read that script file')
+    return (await t.text()).replace(/^\uFEFF/, '').trim()
+  } finally { api(`${D}/files/${id}`, { method: 'DELETE' }).catch(() => {}) }
 }
 
 // ---------- read an uploaded spreadsheet file (xlsx, xls, csv, ods) ----------

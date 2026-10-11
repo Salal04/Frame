@@ -8,7 +8,7 @@ import { STATUSES, syncPlan, buildQueue, waitingOf, countStatus, makeRecord, bui
 export default function Production({ w, run }) {
   const [data, setData] = useState(null), [plan, setPlan] = useState(null), [dirty, setDirty] = useState(false), [sel, setSel] = useState([]), [pz, setPz] = useState({ min: 5, every: 1 }), f = useRef()
   const load = () => run('Reading every project…', async () => {
-    const ps = await G.listProjects(w), out = []
+    const ps = [...await G.listProjects(w), w.singles], out = []   // Singles joins the plan like any other project
     for (const p of ps) { const cfg = await P.loadProject(p); out.push({ p, cfg, rows: await P.loadVideos(p) }) }
     const saved = await P.loadPlan(w), pl = syncPlan(saved, ps)
     setData(out); setPlan(pl); setDirty(JSON.stringify(pl) !== JSON.stringify(saved))
