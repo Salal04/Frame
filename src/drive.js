@@ -17,24 +17,27 @@ export function signIn() {
   })
 }
 // Backend link: the browser gets a one-time code, /api/exchange (holds the client secret) turns it into a refresh token.
-export function connectBackend() {
+function codeFlow(scope, extra = {}, popup = {}) {
   return new Promise((res, rej) => {
     if (!window.google) return rej(new Error('Google script not loaded yet'))
     window.google.accounts.oauth2.initCodeClient({
-      client_id: CID, scope: 'https://www.googleapis.com/auth/drive.file', ux_mode: 'popup',
+      client_id: CID, scope, ux_mode: 'popup', ...popup,
       error_callback: e => rej(new Error(e?.type === 'popup_closed' ? 'Connect was cancelled' : e?.message || 'Connect failed')),
       callback: async r => {
         if (!r.code) return rej(new Error(r.error || 'Connect failed'))
         try {
-          const x = await fetch('/api/exchange', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: r.code }) })
+          const x = await fetch('/api/exchange', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: r.code, ...extra }) })
           const j = await x.json().catch(() => ({}))
           if (!x.ok || !j.refresh_token) throw new Error(j.error || 'Google did not return a refresh token. Remove Frame AI at myaccount.google.com/permissions and connect again.')
-          res(j.refresh_token)
+          res(j)
         } catch (e) { rej(e) }
       },
     }).requestCode()
   })
 }
+export const connectBackend = () => codeFlow('https://www.googleapis.com/auth/drive.file').then(j => j.refresh_token)
+// YouTube upload login for the backend. select_account lets the channel live on a different Google account than the Drive.
+export const connectYouTube = () => codeFlow('https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly', { profile: 'youtube' }, { select_account: true })
 async function api(url, opt = {}) {
   const r = await fetch(url, { ...opt, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...opt.headers } })
   if (!r.ok) throw new Error((await r.text()).slice(0, 300))
@@ -91,6 +94,7 @@ const REQ_SEED = [['Mosque exterior (b-roll)', 'Wide shot of a mosque at golden 
 //     Application Config/  frame_config.json, Production Plan (sheet), Production Record (sheet), Projects (registry sheet), Scene/, Requirements/
 //     Projects/            one folder per project (a playlist: shared narrator, thumbnail style, description)
 //     Singles/             stand-alone videos, no playlist and no shared description (its own sheet, narrator and thumbnail style)
+//     Social/              social_config.json (YouTube login, Buffer key, defaults) + Days/<YYYY-MM-DD>.json, one schedule file per day
 const move = (id, from, to) => api(`${D}/files/${id}?addParents=${to}&removeParents=${from}&fields=id`, { method: 'PATCH', body: '{}' })
 async function ensureAppConfig(root) {
   const a = await find('Application Config', root, FOLDER)
@@ -129,6 +133,7 @@ export async function init() {
     for (const r of await read(projectsSheet, 'Projects!A2:G')) if (r[1]) await move(r[1], root.id, pf.id).catch(() => {})
   }
   const singles = await ensureSingles(root.id)
+  const social = await ensureSocial(root.id)
   const sc = (await adopt('Scene', FOLDER, app.id, root.id)) || await mkFolder('Scene', app.id)
   const ss = await find('Scene Videos', sc.id, SHEET)
   const sceneSheet = ss ? ss.id : await mkSheet('Scene Videos', sc.id, [{ title: 'Scenes', header: SCENE_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
@@ -139,7 +144,14 @@ export async function init() {
     reqSheet = await mkSheet('Requirements', rq.id, [{ title: 'Requirements', header: REQ_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
     await put(reqSheet, 'Requirements!A2:G4', REQ_SEED)
   }
-  return { rootId: root.id, appId: app.id, singles, projectsFolderId: pf.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
+  return { rootId: root.id, appId: app.id, singles, social, projectsFolderId: pf.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
+}
+
+// ---------- Social: accounts, defaults and one schedule file per day. A sibling of Application Config / Projects / Singles. ----------
+async function ensureSocial(root) {
+  const f = (await find('Social', root, FOLDER)) || await mkFolder('Social', root)
+  const days = await ensureFolder('Days', f.id)
+  return { name: 'Social', folderId: f.id, daysId: days.id }
 }
 
 // ---------- Singles: one folder for stand-alone videos. It behaves like a playlist that has no shared description. ----------

@@ -4,6 +4,7 @@ import * as P from './playlist.js'
 import Robot from './Robot.jsx'
 import Videos from './Videos.jsx'
 import Production from './Production.jsx'
+import Social from './Social.jsx'
 import { Narrator, ThumbStudio, ProjectSettings, ControlRoom } from './Studio.jsx'
 import { Confirm, GlobalAssets, Requirements, Scenes } from './Classic.jsx'
 
@@ -13,7 +14,7 @@ export default function App() {
   const run = async (msg, fn) => { setBusy(msg); setErr(''); try { return await fn() } catch (e) { setErr(e.message) } finally { setBusy('') } }
   const connect = () => run('Connecting to your Google Drive…', async () => { await G.signIn(); const ws = await G.init(); ws.g = await P.loadGlobal(ws.appId); setW(ws) })
   if (!w) return <Landing onConnect={connect} busy={busy} err={err} />
-  const nav = [['home', 'Playlists'], ['singles', 'Singles'], ['production', 'Production'], ['control', 'Control room'], ['reqs', 'Requirements'], ['scenes', 'Scenes']]
+  const nav = [['home', 'Playlists'], ['singles', 'Singles'], ['production', 'Production'], ['social', 'Social'], ['control', 'Control room'], ['reqs', 'Requirements'], ['scenes', 'Scenes']]
   const here = view.t === 'playlist' ? 'home' : view.t
   return <div className="shell">
     <header className="top"><b className="logo" onClick={() => setView({ t: 'home' })}><Robot mood={busy ? 'think' : 'idle'} size={40} />Frame AI</b>
@@ -25,6 +26,7 @@ export default function App() {
     {view.t === 'playlist' && <Playlist key={view.p.folderId} w={w} p={view.p} run={run} back={() => setView({ t: 'home' })} />}
     {view.t === 'singles' && <Playlist key="singles" w={w} p={w.singles} single run={run} />}
     {view.t === 'production' && <Production w={w} run={run} />}
+    {view.t === 'social' && <Social w={w} run={run} />}
     {view.t === 'control' && <ControlRoom g={w.g} run={run} />}
     {view.t === 'reqs' && <Requirements w={w} run={run} />}
     {view.t === 'scenes' && <Scenes w={w} run={run} />}

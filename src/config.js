@@ -162,18 +162,24 @@ export function importRows(head, a, table, base, stamp) {
 }
 
 // ---------------------------------------------------------------- merge the three levels into one VideoConfig
+// own thumbnail wins; otherwise the backend writes the title on the project's default template
+export const thumbnailFor = (p, v) => {
+  const t = p.thumb || {}, own = (v.thumbLink || '').trim(), title_text = (v.thumbText || v.title || '').trim()
+  return own ? { source: 'video', url: own }
+    : { source: t.templateId ? 'default_template' : 'plain_background', template_url: t.templateLink || '', template_file_id: t.templateId || '', title_text,
+        font: t.font, size: t.size, color: t.color, stroke: t.stroke, align: t.align, x: t.x, y: t.y, max_width: t.maxWidth, shade: t.shade }
+}
+// the video's own description first, then the playlist's shared one
+export const descriptionFor = (p, v) => [(v.description || '').trim(), (p.description || '').trim()].filter(Boolean).join('\n\n')
+
 export function resolveJob(g, p, v, playlist) {
   let extra = {}
   if (v.extra?.trim()) { try { extra = JSON.parse(v.extra) } catch { throw new Error(`Row ${v.row} (${v.title}): Extra Config is not valid JSON`) } }
   const pin = p.tts_model, rest = csv(g.models.tts).filter(x => x !== pin)
   const tts = p.tts_strict && pin ? [pin] : [...(pin ? [pin] : []), ...rest]   // a pinned model keeps the voice identical across the playlist
-  const dv = (v.description || '').trim(), dp = (p.description || '').trim(), t = p.thumb || {}, own = (v.thumbLink || '').trim()
-  const title_text = (v.thumbText || v.title || '').trim()
+  const dv = (v.description || '').trim(), dp = (p.description || '').trim()
   const isScript = normInput(v.inputType) === 'Script' && (v.script || '').trim()   // a script row with no script text falls back to its prompt
-  // own thumbnail wins; otherwise the backend writes the title on the project's default template
-  const thumbnail = own ? { source: 'video', url: own }
-    : { source: t.templateId ? 'default_template' : 'plain_background', template_url: t.templateLink || '', template_file_id: t.templateId || '', title_text,
-        font: t.font, size: t.size, color: t.color, stroke: t.stroke, align: t.align, x: t.x, y: t.y, max_width: t.maxWidth, shade: t.shade }
+  const thumbnail = thumbnailFor(p, v)
   const cfg = {
     description: [dv, dp].filter(Boolean).join('\n\n'), description_video: dv, description_project: dp, thumbnail,
     input_type: isScript ? 'script' : 'prompt', script: isScript ? v.script.trim() : '',
