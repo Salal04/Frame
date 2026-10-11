@@ -7,7 +7,7 @@ import { Confirm } from './Classic.jsx'
 // Social: decide WHICH finished video goes out on WHICH day, in WHAT order, and how it is cut into reels.
 // The backend reads the day file (Frame AI/Social/Days/<date>.json), picks the time of day and uploads.
 const isoNow = () => new Date().toISOString()
-const ready = (cfg, id) => id === 'youtube' ? !!cfg.accounts.youtube.refresh_token : !!cfg.accounts.buffer.api_key && !!cfg.platforms[id].channel_id
+const ready = (cfg, id) => id === 'youtube' ? !!cfg.accounts.youtube.refresh_token : !!X.bufferAccount(cfg, id).api_key && !!cfg.platforms[id].channel_id
 const kindLabel = (pf, it) => it.kind === 'video' ? 'Complete video' : `${pf.reelName} ${it.reel?.part}/${it.reel?.of}`
 
 export default function Social({ w, run }) {
@@ -197,7 +197,8 @@ function PlatformSettings({ pf, soc, run, saveCfg }) {
 // ====================================================================== SETUP: accounts + defaults
 export function Setup({ w, run, soc, saveCfg, clear }) {
   const cfg = soc.cfg, yt = cfg.accounts.youtube, bf = cfg.accounts.buffer
-  const [key, setKey] = useState(bf.api_key), [show, setShow] = useState(false), [found, setFound] = useState(null), [msg, setMsg] = useState('')
+  const [show, setShow] = useState(false), [found, setFound] = useState({}), [msg, setMsg] = useState({})
+  const [keys, setKeys] = useState({ tiktok: bf.tiktok?.api_key || bf.api_key || '', instagram: bf.instagram?.api_key || bf.api_key || '' })
   const [ch, setCh] = useState({ tiktok: { id: cfg.platforms.tiktok.channel_id, name: cfg.platforms.tiktok.channel_name }, instagram: { id: cfg.platforms.instagram.channel_id, name: cfg.platforms.instagram.channel_name } })
   const [tz, setTz] = useState(cfg.timezone), [rl, setRl] = useState(cfg.reels), [ok, setOk] = useState('')
   const connectYt = () => run('Connecting YouTube…', async () => {
@@ -206,16 +207,27 @@ export function Setup({ w, run, soc, saveCfg, clear }) {
     await saveCfg({ ...cfg, accounts: { ...cfg.accounts, youtube: { refresh_token: j.refresh_token, channel_id: j.channel.id, channel_title: j.channel.title, connected_at: isoNow() } } })
     await clear(['youtube'])
   })
-  const find = () => run('Asking Buffer for your channels…', async () => {
-    setMsg(''); try { setFound(await S.bufferChannels(key)) } catch (e) { setFound(null); setMsg(e.message) }
+  const find = slot => run('Asking Buffer for your channels…', async () => {
+    setMsg(m => ({ ...m, [slot]: '' }))
+    try { const f = await S.bufferChannels(keys[slot]); setFound(o => ({ ...o, [slot]: f })) } catch (e) { setFound(o => ({ ...o, [slot]: null })); setMsg(m => ({ ...m, [slot]: e.message })) }
   })
   const saveBuffer = () => run('Saving Buffer…', async () => {
-    await saveCfg({ ...cfg, accounts: { ...cfg.accounts, buffer: { api_key: key.trim(), organization_id: found?.organization_id || bf.organization_id, connected_at: bf.connected_at || isoNow() } },
+    const acc = pf => ({ api_key: keys[pf].trim(), organization_id: found[pf]?.organization_id || bf[pf]?.organization_id || bf.organization_id || '', connected_at: bf[pf]?.connected_at || isoNow() })
+    const buffer = { api_key: '', organization_id: '', connected_at: '', tiktok: acc('tiktok'), instagram: acc('instagram') }
+    await saveCfg({ ...cfg, accounts: { ...cfg.accounts, buffer },
       platforms: { ...cfg.platforms, tiktok: { ...cfg.platforms.tiktok, channel_id: ch.tiktok.id.trim(), channel_name: ch.tiktok.name }, instagram: { ...cfg.platforms.instagram, channel_id: ch.instagram.id.trim(), channel_name: ch.instagram.name } } })
     await clear(['tiktok', 'instagram']); setOk('buffer')
   })
-  const pick = (pf, id) => { const c = found?.channels.find(x => x.id === id); setCh({ ...ch, [pf]: { id, name: c?.name || '' } }) }
-  const opts = pf => (found?.channels || []).filter(c => c.service.includes(pf))
+  const pick = (pf, id) => { const c = found[pf]?.channels.find(x => x.id === id); setCh({ ...ch, [pf]: { id, name: c?.name || '' } }) }
+  const opts = pf => (found[pf]?.channels || []).filter(c => c.service.includes(pf))
+  const keyBlock = (slot, label) => <div key={slot}>
+    <label>{label}<input className={show ? '' : 'secret'} value={keys[slot]} onChange={e => setKeys({ ...keys, [slot]: e.target.value })} placeholder="Create it in Buffer: Settings, API" autoComplete="off" /></label>
+    <div className="row"><button className="ghost" disabled={!keys[slot].trim()} onClick={() => find(slot)}>Find my channels</button></div>
+    {msg[slot] && <p className="bad">{msg[slot]}</p>}
+    {found[slot] && <p className="ok">Found {found[slot].channels.length} channel{found[slot].channels.length === 1 ? '' : 's'} in {found[slot].organization}.</p>}</div>
+  const chanRow = pf => <div className="cols" key={pf}>
+    <label>{X.platformOf(pf).name} channel{opts(pf).length > 0 && <select value={ch[pf].id} onChange={e => pick(pf, e.target.value)}><option value="">Choose…</option>{opts(pf).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}</label>
+    <label>{X.platformOf(pf).name} channel ID<input value={ch[pf].id} onChange={e => setCh({ ...ch, [pf]: { id: e.target.value, name: ch[pf].name } })} placeholder="Found with “Find my channels”, or typed" /></label></div>
   return <section>
     <p className="muted">Everything here is saved once in <b>Frame AI / Social / social_config.json</b> in your Drive, and the backend reads it from there, so you never paste it twice. That file holds logins: keep the Social folder private.</p>
 
@@ -226,16 +238,12 @@ export function Setup({ w, run, soc, saveCfg, clear }) {
       <p className="hint">Uses YouTube’s own upload API. Before it works: turn on <b>YouTube Data API v3</b> in the same Google Cloud project and add the YouTube upload scope to the consent screen. Videos uploaded through a project that Google has not audited are forced to Private, so for public uploads apply for the YouTube API audit.</p></div>
 
     <div className="panel"><h3>Buffer (TikTok and Instagram)</h3>
-      <label>Buffer API key<input className={show ? '' : 'secret'} value={key} onChange={e => setKey(e.target.value)} placeholder="Create it in Buffer: Settings, API" autoComplete="off" /></label>
-      <label className="chk"><input type="checkbox" checked={show} onChange={e => setShow(e.target.checked)} />Show key</label>
-      <div className="row"><button className="ghost" disabled={!key.trim()} onClick={find}>Find my channels</button><a className="ghost" target="_blank" rel="noreferrer" href="https://publish.buffer.com/settings/api">Open Buffer API settings</a></div>
-      {msg && <p className="bad">{msg}</p>}
-      {found && <p className="ok">Found {found.channels.length} channel{found.channels.length === 1 ? '' : 's'} in {found.organization}.</p>}
-      {['tiktok', 'instagram'].map(pf => <div className="cols" key={pf}>
-        <label>{X.platformOf(pf).name} channel{opts(pf).length > 0 && <select value={ch[pf].id} onChange={e => pick(pf, e.target.value)}><option value="">Choose…</option>{opts(pf).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}</label>
-        <label>{X.platformOf(pf).name} channel ID<input value={ch[pf].id} onChange={e => setCh({ ...ch, [pf]: { id: e.target.value, name: ch[pf].name } })} placeholder="Found with “Find my channels”, or typed" /></label></div>)}
-      <div className="row"><button className="cta sm" disabled={!key.trim()} onClick={saveBuffer}>Save Buffer</button>{ok === 'buffer' && <span className="ok">Saved</span>}</div>
-      <p className="hint">If “Find my channels” is blocked by the browser, open the Explorer on developers.buffer.com, list your channels there and paste the two IDs.</p></div>
+      <p className="hint">Each platform has its own Buffer API key. If both are in the same Buffer account, paste the same key in both fields.</p>
+      {['tiktok', 'instagram'].map(pf => <div key={pf}><h4>{X.platformOf(pf).name}</h4>{keyBlock(pf, `${X.platformOf(pf).name} Buffer API key`)}{chanRow(pf)}</div>)}
+      <label className="chk"><input type="checkbox" checked={show} onChange={e => setShow(e.target.checked)} />Show keys</label>
+      <div className="row"><a className="ghost" target="_blank" rel="noreferrer" href="https://publish.buffer.com/settings/api">Open Buffer API settings</a>
+        <button className="cta sm" disabled={!keys.tiktok.trim() && !keys.instagram.trim()} onClick={saveBuffer}>Save Buffer</button>{ok === 'buffer' && <span className="ok">Saved</span>}</div>
+      <p className="hint">If “Find my channels” is blocked by the browser, open the Explorer on developers.buffer.com, list your channels there and paste the IDs. If they are different accounts, log in to each Buffer account to create its own key.</p></div>
 
     <div className="panel"><h3>Defaults</h3>
       <div className="cols"><label>Time zone for “day”<input value={tz} onChange={e => setTz(e.target.value)} /><small className="hint">A day file means that calendar date in this time zone, for example Asia/Karachi.</small></label>

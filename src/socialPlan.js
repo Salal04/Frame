@@ -25,7 +25,11 @@ export const SOCIAL_DEFAULTS = {
   timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Karachi' } catch { return 'Asia/Karachi' } })(),
   accounts: {
     youtube: { refresh_token: '', channel_id: '', channel_title: '', connected_at: '' },
-    buffer: { api_key: '', organization_id: '', connected_at: '' },
+    // Each platform has its own Buffer key. One Buffer account for both? Paste the same key in both fields.
+    // (api_key / organization_id directly on buffer = old single-key config; still honoured as a fallback.)
+    buffer: { api_key: '', organization_id: '', connected_at: '',
+      tiktok: { api_key: '', organization_id: '', connected_at: '' },
+      instagram: { api_key: '', organization_id: '', connected_at: '' } },
   },
   reels: { count: 4, cut: 'equal', fit: 'blur', partLabel: true },   // how a video is divided; the planner starts from these
   platforms: {
@@ -36,6 +40,8 @@ export const SOCIAL_DEFAULTS = {
   },
 }
 export const YT_CATEGORIES = [['27', 'Education'], ['28', 'Science & Technology'], ['22', 'People & Blogs'], ['24', 'Entertainment'], ['26', 'Howto & Style'], ['25', 'News & Politics']]
+// Which Buffer key a platform publishes through (the backend must use the same rule).
+export const bufferAccount = (cfg, pf) => { const b = cfg.accounts.buffer; return b[pf]?.api_key ? b[pf] : b }
 export const withDefaults = cfg => mergeDeep(SOCIAL_DEFAULTS, cfg || {})
 
 // ---------------------------------------------------------------- dates (a "day" is a plain YYYY-MM-DD in the user's time zone)
