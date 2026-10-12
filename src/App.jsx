@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import * as G from './drive.js'
 import * as P from './playlist.js'
 import Robot from './Robot.jsx'
@@ -15,12 +15,9 @@ export default function App() {
   const run = async (msg, fn) => { setBusy(msg); setErr(''); try { return await fn() } catch (e) { setErr(e.message) } finally { setBusy('') } }
   const connect = () => run('Connecting to your Google Drive…', async () => { await G.signIn(); const ws = await G.init(); ws.g = await P.loadGlobal(ws.appId); setW(ws) })
   if (!w) return <Landing onConnect={connect} busy={busy} err={err} />
-  const nav = [['home', 'Playlists'], ['singles', 'Singles'], ['production', 'Production'], ['social', 'Social'], ['brand', 'Brand'], ['control', 'Control room'], ['reqs', 'Requirements'], ['scenes', 'Scenes']]
   const here = view.t === 'playlist' ? 'home' : view.t
   return <div className="shell">
-    <header className="top"><b className="logo" onClick={() => setView({ t: 'home' })}><Robot mood={busy ? 'think' : 'idle'} size={40} />Frame AI</b>
-      <nav>{nav.map(([k, l]) => <button key={k} className={here === k ? 'on' : ''} onClick={() => setView({ t: k })}>{l}</button>)}
-        <a href={`https://drive.google.com/drive/folders/${w.rootId}`} target="_blank" rel="noreferrer">Open in Drive</a></nav></header>
+    <TopBar here={here} go={k => setView({ t: k })} busy={busy} rootId={w.rootId} />
     {busy && <div className="bar"><span />{busy}</div>}
     {err && <div className="err" role="alert" onClick={() => setErr('')}>{err}</div>}
     {view.t === 'home' && <Playlists w={w} run={run} open={p => setView({ t: 'playlist', p })} />}
@@ -33,6 +30,40 @@ export default function App() {
     {view.t === 'reqs' && <Requirements w={w} run={run} />}
     {view.t === 'scenes' && <Scenes w={w} run={run} />}
   </div>
+}
+
+// Main pages stay inline on desktop; everything else lives in the "More" dropdown.
+// On phones the inline links hide and one dropdown button (showing the current page) holds every page.
+const PRIMARY = [['home', 'Playlists'], ['singles', 'Singles'], ['production', 'Production'], ['social', 'Social']]
+const MORE = [['brand', 'Brand'], ['control', 'Control room'], ['reqs', 'Requirements'], ['scenes', 'Scenes']]
+
+function TopBar({ here, go, busy, rootId }) {
+  const [open, setOpen] = useState(false), box = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const out = e => { if (!box.current?.contains(e.target)) setOpen(false) }
+    const esc = e => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('pointerdown', out); document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('pointerdown', out); document.removeEventListener('keydown', esc) }
+  }, [open])
+  const pick = k => { setOpen(false); go(k) }
+  const current = [...PRIMARY, ...MORE].find(([k]) => k === here)
+  const item = ([k, l], cls = '') => <button key={k} role="menuitem" className={(cls + (here === k ? ' on' : '')).trim()} onClick={() => pick(k)}>{l}</button>
+  return <header className="top">
+    <b className="logo" role="link" tabIndex={0} onClick={() => pick('home')} onKeyDown={e => e.key === 'Enter' && pick('home')}><Robot mood={busy ? 'think' : 'idle'} size={40} />Frame AI</b>
+    <nav ref={box} aria-label="Main">
+      {PRIMARY.map(([k, l]) => <button key={k} className={'navbtn' + (here === k ? ' on' : '')} onClick={() => pick(k)}>{l}</button>)}
+      <div className="menu">
+        <button className={'menubtn' + (MORE.some(([k]) => k === here) ? ' on' : '')} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span className="lbl-more">More</span><span className="lbl-menu">{current ? current[1] : 'Menu'}</span><i className="caret" aria-hidden="true" />
+        </button>
+        {open && <div className="drop" role="menu">
+          {PRIMARY.map(p => item(p, 'p'))}
+          {MORE.map(m => item(m))}
+          <a role="menuitem" href={`https://drive.google.com/drive/folders/${rootId}`} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>Open in Drive</a>
+        </div>}
+      </div>
+    </nav></header>
 }
 
 function Landing({ onConnect, busy, err }) {
