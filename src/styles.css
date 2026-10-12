@@ -35,7 +35,7 @@ label.ghost{margin:0;align-self:flex-start}
 /* shell */
 .top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 24px;margin:12px 16px;background:var(--clay);border-radius:34px;box-shadow:var(--out);position:sticky;top:12px;z-index:5}
 .logo{display:flex;align-items:center;gap:6px;font-size:1.3rem;font-weight:600;cursor:pointer}.logo .robot{filter:drop-shadow(3px 4px 4px rgba(69,96,230,.3))}
-nav{display:flex;gap:6px;align-items:center;flex-wrap:wrap}nav button{background:0;border:0;padding:8px 16px;border-radius:999px;cursor:pointer;color:var(--mute);font-weight:500}
+nav{display:flex;gap:6px;align-items:center}nav button{background:0;border:0;padding:8px 16px;border-radius:999px;cursor:pointer;color:var(--mute);font-weight:500}
 nav button.on{color:var(--ink);box-shadow:var(--in);background:var(--bg)}
 .page{max-width:1040px;margin:0 auto;padding:28px 24px 60px}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:14px 0}.row.tight{margin:8px 0 0;gap:8px}
@@ -55,7 +55,7 @@ textarea.secret,input.secret{-webkit-text-security:disc;text-security:disc}
 .seg{display:flex;flex-direction:column;gap:10px}.seg button{background:var(--clay);border:0;padding:11px 18px;border-radius:22px;cursor:pointer;text-align:left;box-shadow:var(--small);font-weight:500}
 .tabs{flex-direction:row;flex-wrap:wrap;margin:10px 0 22px;padding:8px;background:var(--bg);border-radius:999px;box-shadow:var(--in);gap:6px}
 .tabs button{flex:1;text-align:center;border-radius:999px;box-shadow:none;background:0;color:var(--mute)}.tabs .on{background:var(--clay);color:var(--ink);box-shadow:var(--small)}
-.cols{display:grid;grid-template-columns:1fr 1fr;gap:6px 26px}@media(max-width:760px){.cols,.thumb{grid-template-columns:1fr!important}.top{flex-direction:column;border-radius:28px}}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:6px 26px}@media(max-width:760px){.cols,.thumb{grid-template-columns:1fr!important}}
 /* videos */
 .stats{color:var(--mute);margin:8px 0}.stats b{font-family:'Fredoka',sans-serif;font-size:1.5rem;color:var(--ink);margin:0 4px 0 12px}.stats b:first-child{margin-left:0}
 .video{gap:0}.vhead{display:grid;grid-template-columns:44px 1fr auto;gap:14px;align-items:center;cursor:pointer}.vhead h3{margin:0}.vbody{margin-top:10px}
@@ -130,3 +130,50 @@ table{width:100%;border-collapse:separate;border-spacing:0 10px;margin:14px 0}th
 .slot-art{height:120px;border-radius:16px;display:grid;place-items:center;overflow:hidden;background:repeating-conic-gradient(#ddd8f3 0 25%,#f3f0ff 0 50%) 0 0/16px 16px;box-shadow:var(--in)}
 .slot-art img{max-width:100%;max-height:100%;object-fit:contain}
 .colorrow{display:flex;gap:22px;align-items:center}
+
+/* ---------- navbar: inline links + dropdown ---------- */
+html{-webkit-text-size-adjust:100%}body{-webkit-tap-highlight-color:transparent}
+.logo{flex:0 0 auto;white-space:nowrap}
+.menu{position:relative}
+nav .menubtn{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.lbl-menu{display:none}
+.caret{width:7px;height:7px;border:solid currentColor;border-width:0 2.5px 2.5px 0;transform:rotate(45deg) translate(-1px,-2px);transition:transform .15s}
+.menubtn[aria-expanded=true] .caret{transform:rotate(225deg) translate(-1px,-2px)}
+.drop{position:absolute;right:0;top:calc(100% + 16px);min-width:230px;display:flex;flex-direction:column;gap:4px;padding:10px;background:var(--clay);border-radius:26px;box-shadow:var(--out);z-index:7;transform-origin:top right;animation:pop .14s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(-6px) scale(.97)}}
+nav .drop button,.drop a{display:flex;align-items:center;width:100%;min-height:44px;padding:10px 16px;border-radius:16px;text-align:left;font-weight:500;cursor:pointer}
+nav .drop button{background:0;border:0;color:var(--ink)}
+nav .drop button.on{background:var(--bg);box-shadow:var(--in)}
+nav .drop button:hover,.drop a:hover{background:var(--bg)}
+.drop a{color:var(--bolt);margin-top:4px;border-top:1px solid rgba(112,96,185,.2);border-radius:0 0 16px 16px;padding-top:12px}
+.drop .p{display:none}
+
+/* ---------- tablet and phone ---------- */
+@media(max-width:860px){
+  .top{padding:8px 10px 8px 16px;margin:10px;top:10px;border-radius:30px}
+  .navbtn,.lbl-more{display:none}
+  .lbl-menu{display:inline}
+  .menu{position:static}
+  nav .menubtn{background:var(--bg);box-shadow:var(--in);color:var(--ink);padding:10px 18px;min-height:44px}
+  .drop{left:0;right:0;top:calc(100% + 10px);min-width:0;transform-origin:top center;max-height:calc(100vh - 110px);max-height:calc(100dvh - 110px);overflow-y:auto}
+  .drop .p{display:flex}
+}
+@media(max-width:640px){
+  .logo{font-size:1.15rem}.logo .robot{width:32px;height:32px}
+  .page{padding:18px 14px 48px}
+  h2{font-size:1.65rem}h3{font-size:1.08rem}
+  .hero{min-height:100vh;min-height:100dvh;padding:20px}.hero h1{font-size:2.1rem}.hero .robot{width:min(220px,62vw);height:auto}
+  .cards,.voices,.slots{grid-template-columns:1fr;gap:16px}.cards{margin-top:16px}
+  .card{border-radius:24px;padding:16px}
+  .row{gap:10px}.row input:not(.mini){flex:1 1 100%;min-width:0}.row>.cta{flex:1 1 auto}
+  .tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));border-radius:26px;padding:6px;margin:8px 0 18px}
+  .tabs button{padding:10px 8px}.row .tabs{flex:1 1 100%}
+  .vhead{grid-template-columns:36px 1fr;gap:6px 12px}.vhead .pill{grid-column:2;justify-self:start}.num{width:36px;height:36px}
+  .sv{gap:10px}.target .chk{min-width:0;flex:1 1 100%}
+  .narr-head{gap:12px}.narr-head .robot{width:64px;height:64px}
+  .pv-banner{height:110px}.pv-head{padding:0 14px 14px;gap:12px}.avatar{width:72px;height:72px;font-size:1.6rem}.pv-btn{margin-left:0}.pv-tiles{grid-template-columns:repeat(2,1fr);padding:0 14px 18px}
+  .box{width:100%;padding:22px;border-radius:26px;max-height:90vh;max-height:90dvh;overflow-y:auto}
+  .bar{margin:0 10px;max-width:calc(100% - 20px);border-radius:22px}.err{margin:10px;max-width:none}
+  table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}th,td{min-width:110px;padding:9px 12px;font-size:.92rem}
+  .ghost.sm,.cta.sm,.chip{min-height:40px}
+}
