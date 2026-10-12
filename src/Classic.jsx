@@ -9,7 +9,7 @@ export function GlobalAssets({p,run}){
   const [files,setFiles]=useState([]),load=()=>run('Loading assets…',async()=>setFiles(await G.listGlobal(p)))
   useEffect(()=>{load()},[])
   const up=cat=>async e=>{const fs=[...e.target.files];e.target.value='';for(const x of fs)await run(`Uploading ${x.name}…`,()=>G.uploadGlobal(p,cat,x));load()}
-  return <section><p className="muted">Uploaded once, used by every video of this project.</p><div className="cards">
+  return <section><p className="muted">Uploaded once, used by every video of this project. The logo, profile picture, banner and intro for <b>all</b> your playlists live in the <b>Brand</b> tab at the top.</p><div className="cards">
     {G.GLOBAL.map(([cat,hint,acc])=><div className="card" key={cat}><div><h3>{cat.replace('-',' & ')}</h3><p className="muted">{hint}</p>
       {files.filter(f=>f.cat===cat).map((f,i)=><small key={i}><a href={f.link} target="_blank" rel="noreferrer">{f.name}</a><br/></small>)}</div>
       <label className="ghost">Upload<input type="file" multiple hidden accept={acc} onChange={up(cat)}/></label></div>)}</div></section>}

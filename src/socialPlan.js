@@ -10,9 +10,13 @@ import { thumbnailFor, descriptionFor, mergeDeep, csv } from './config.js'
 
 export const PLATFORMS = [
   { id: 'youtube', name: 'YouTube', via: 'YouTube API', hasVideo: true, reelName: 'Shorts' },
+  { id: 'facebook', name: 'Facebook', via: 'Buffer', hasVideo: true, reelName: 'Reels' },
   { id: 'tiktok', name: 'TikTok', via: 'Buffer', hasVideo: false, reelName: 'Reels' },
   { id: 'instagram', name: 'Instagram', via: 'Buffer', hasVideo: false, reelName: 'Reels' }]
 export const platformOf = id => PLATFORMS.find(p => p.id === id)
+export const BUFFER_PLATFORMS = PLATFORMS.filter(p => p.via === 'Buffer')   // each has its own Buffer key + channel
+export const tkey = (pf, kind) => `${pf}:${kind}`                          // planner target id, e.g. "facebook:video", "tiktok:reel"
+export const targetLabel = (P, kind) => kind === 'video' ? `${P.name} · complete video` : `${P.name} · ${P.reelName}`
 export const YT_DAILY = 6   // videos.insert costs 1,600 quota units; the default 10,000 units/day is about 6 uploads (plus thumbnails)
 
 export const CUTS = [
@@ -28,6 +32,7 @@ export const SOCIAL_DEFAULTS = {
     // Each platform has its own Buffer key. One Buffer account for both? Paste the same key in both fields.
     // (api_key / organization_id directly on buffer = old single-key config; still honoured as a fallback.)
     buffer: { api_key: '', organization_id: '', connected_at: '',
+      facebook: { api_key: '', organization_id: '', connected_at: '' },
       tiktok: { api_key: '', organization_id: '', connected_at: '' },
       instagram: { api_key: '', organization_id: '', connected_at: '' } },
   },
@@ -35,6 +40,8 @@ export const SOCIAL_DEFAULTS = {
   platforms: {
     youtube: { privacy: 'public', category: '27', madeForKids: false, tags: '', hashtags: '#shorts',
       videoTitle: '{title}', videoDescription: '{description}', reelTitle: '{title} (Part {part}/{parts})', reelDescription: '{title}\n\n{hashtags}' },
+    // Facebook Page: a complete video and a reel each get their own caption. channel_id = the Page's Buffer channel.
+    facebook: { channel_id: '', channel_name: '', hashtags: '', videoCaption: '{title}\n\n{description}\n\n{hashtags}', reelCaption: '{title} (Part {part}/{parts})\n\n{hashtags}' },
     tiktok: { channel_id: '', channel_name: '', hashtags: '', caption: '{title} (Part {part}/{parts})\n{hashtags}' },
     instagram: { channel_id: '', channel_name: '', hashtags: '', caption: '{title} (Part {part}/{parts})\n\n{hashtags}' },
   },
@@ -91,18 +98,21 @@ const fill = (t, o) => String(t || '').replace(/\{(\w+)\}/g, (_, k) => o[k] ?? '
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`).replace(/-/g, '').slice(0, 10)
 export const dupKey = it => [it.video?.key, it.platform, it.kind, it.reel?.part || 0].join('|')
 
+const captionOf = (pc, kind) => (kind === 'video' ? pc.videoCaption : pc.reelCaption) ?? pc.caption ?? ''
+
 function makeItem(platform, kind, v, cfg, reel) {
-  const pc = cfg.platforms[platform], isYt = platform === 'youtube'
+  const pc = cfg.platforms[platform], isYt = platform === 'youtube', P = platformOf(platform)
   const ctx = { title: v.title, description: v.description, project: v.single ? '' : v.project, part: reel?.part ?? '', parts: reel?.of ?? '', hashtags: pc.hashtags || '' }
   return {
     id: newId(), platform, kind, order: 0, status: 'Planned', time: 'auto',   // time "auto" = the backend picks the time of day
     video: { key: v.key, project: v.project, project_id: v.projectId, single: v.single, row: v.row, title: v.title, output: v.output, file_id: v.file_id, minutes: v.minutes, language: v.language },
     reel: reel || null,
-    thumbnail: isYt && kind === 'video' ? v.thumbnail : null,
+    thumbnail: P.hasVideo && kind === 'video' ? v.thumbnail : null,   // YouTube and Facebook complete videos get the thumbnail
     title: isYt ? fill(kind === 'video' ? pc.videoTitle : pc.reelTitle, ctx).slice(0, 100) : '',
     description: isYt ? fill(kind === 'video' ? pc.videoDescription : pc.reelDescription, ctx) : '',
-    caption: isYt ? '' : fill(pc.caption, ctx),
-    publish: isYt ? { privacy: pc.privacy, category: pc.category, made_for_kids: !!pc.madeForKids, tags: csv(pc.tags) } : { via: 'buffer', channel_id: pc.channel_id || '' },
+    caption: isYt ? '' : fill(captionOf(pc, kind), ctx),
+    // format tells the backend what to post: "video" = a normal (landscape) video post, "reel" = a vertical reel
+    publish: isYt ? { privacy: pc.privacy, category: pc.category, made_for_kids: !!pc.madeForKids, tags: csv(pc.tags) } : { via: 'buffer', channel_id: pc.channel_id || '', format: kind },
     result: { link: '', at: '', error: '', attempts: 0 }, moved_from: [],
   }
 }
@@ -115,24 +125,25 @@ export function loadOf(days, platform) {
 }
 
 // plan = { videos (in the order the user chose), start, gap, targets, reels, days }
-//   Complete video (YouTube): on its own day = start + (video number x gap) + offset.
+//   Complete video (YouTube, Facebook): on its own day = start + (video number x gap) + offset.
 //   Reels: one queue per platform, in the chosen order (all parts of video 1, then video 2 ...), `perDay` a day,
 //   starting at start + offset and skipping days that already hold `perDay` items of that platform.
 // Returns [{ date, item }] plus what was left out. Nothing is written here.
 export function buildEntries({ videos, start, gap, targets, reels, cfg, existing = new Set(), days = {} }) {
   if (!validDay(start)) throw new Error('Pick a start day.')
   const entries = [], skipped = [], gapN = Math.max(0, Math.floor(+gap || 0))
-  const wantReels = ['youtube', 'tiktok', 'instagram'].filter(p => targets[p === 'youtube' ? 'ytReel' : p]?.on)
+  const wantVideos = PLATFORMS.filter(P => P.hasVideo && targets[tkey(P.id, 'video')]?.on)
+  const wantReels = PLATFORMS.map(P => P.id).filter(p => targets[tkey(p, 'reel')]?.on)
   let ranges = null, count = Math.max(1, Math.floor(+reels.count || 1))
   if (wantReels.length) {
     if (reels.cut === 'manual') { ranges = parseRanges(reels.manual); if (!ranges.length) throw new Error('Write at least one time range, or choose another way to cut.'); count = ranges.length }
     else if (count > 60) throw new Error('That is a lot of reels for one video. Use 60 or fewer.')
   }
   const lane = {}   // per platform: where its reel queue stands
-  wantReels.forEach(p => { const t = targets[p === 'youtube' ? 'ytReel' : p]; lane[p] = { day: addDays(start, Math.max(0, Math.floor(+t.offset || 0))), per: Math.max(1, Math.floor(+t.perDay || 1)), load: loadOf(days, p) } })
+  wantReels.forEach(p => { const t = targets[tkey(p, 'reel')]; lane[p] = { day: addDays(start, Math.max(0, Math.floor(+t.offset || 0))), per: Math.max(1, Math.floor(+t.perDay || 1)), load: loadOf(days, p) } })
   const put = (date, item) => { const k = dupKey(item); if (existing.has(k)) { skipped.push(item); return false } existing.add(k); entries.push({ date, item }); return true }
   videos.forEach((v, vi) => {
-    if (targets.ytVideo?.on) put(addDays(start, vi * gapN + Math.max(0, Math.floor(+targets.ytVideo.offset || 0))), makeItem('youtube', 'video', v, cfg, null))
+    wantVideos.forEach(P => put(addDays(start, vi * gapN + Math.max(0, Math.floor(+targets[tkey(P.id, 'video')].offset || 0))), makeItem(P.id, 'video', v, cfg, null)))
     wantReels.forEach(p => {
       const L = lane[p]
       for (let n = 1; n <= count; n++) {

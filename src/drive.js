@@ -94,7 +94,8 @@ const REQ_SEED = [['Mosque exterior (b-roll)', 'Wide shot of a mosque at golden 
 //     Application Config/  frame_config.json, Production Plan (sheet), Production Record (sheet), Projects (registry sheet), Scene/, Requirements/
 //     Projects/            one folder per project (a playlist: shared narrator, thumbnail style, description)
 //     Singles/             stand-alone videos, no playlist and no shared description (its own sheet, narrator and thumbnail style)
-//     Social/              social_config.json (YouTube login, Buffer key, defaults) + Days/<YYYY-MM-DD>.json, one schedule file per day
+//     Social/              social_config.json (YouTube login, Buffer keys, defaults) + Days/<YYYY-MM-DD>.json, one schedule file per day
+//     Brand/               brand.json + Logo/, Profile/, Banner/, Intro-Outro/ ...: ONE brand kit for every playlist and every platform
 const move = (id, from, to) => api(`${D}/files/${id}?addParents=${to}&removeParents=${from}&fields=id`, { method: 'PATCH', body: '{}' })
 async function ensureAppConfig(root) {
   const a = await find('Application Config', root, FOLDER)
@@ -134,6 +135,7 @@ export async function init() {
   }
   const singles = await ensureSingles(root.id)
   const social = await ensureSocial(root.id)
+  const brand = await ensureBrand(root.id)
   const sc = (await adopt('Scene', FOLDER, app.id, root.id)) || await mkFolder('Scene', app.id)
   const ss = await find('Scene Videos', sc.id, SHEET)
   const sceneSheet = ss ? ss.id : await mkSheet('Scene Videos', sc.id, [{ title: 'Scenes', header: SCENE_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
@@ -144,7 +146,7 @@ export async function init() {
     reqSheet = await mkSheet('Requirements', rq.id, [{ title: 'Requirements', header: REQ_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
     await put(reqSheet, 'Requirements!A2:G4', REQ_SEED)
   }
-  return { rootId: root.id, appId: app.id, singles, social, projectsFolderId: pf.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
+  return { rootId: root.id, appId: app.id, singles, social, brand, projectsFolderId: pf.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
 }
 
 // ---------- Social: accounts, defaults and one schedule file per day. A sibling of Application Config / Projects / Singles. ----------
@@ -152,6 +154,12 @@ async function ensureSocial(root) {
   const f = (await find('Social', root, FOLDER)) || await mkFolder('Social', root)
   const days = await ensureFolder('Days', f.id)
   return { name: 'Social', folderId: f.id, daysId: days.id }
+}
+
+// ---------- Brand: the global brand kit (logo, profile picture, banner, intro/outro) shared by everything. A sibling of Social / Projects / Singles. ----------
+async function ensureBrand(root) {
+  const f = (await find('Brand', root, FOLDER)) || await mkFolder('Brand', root)
+  return { name: 'Brand', folderId: f.id }
 }
 
 // ---------- Singles: one folder for stand-alone videos. It behaves like a playlist that has no shared description. ----------

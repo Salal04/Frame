@@ -68,14 +68,16 @@ export function Videos({ w, run, pool, days, soc, reload }) {
 export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
   const cfg = soc.cfg
   const [start, setStart] = useState(X.addDays(X.todayISO(), 1)), [gap, setGap] = useState(1)
-  const [t, setT] = useState({ ytVideo: { on: true, offset: 0 }, ytReel: { on: true, offset: 0, perDay: 1 }, tiktok: { on: true, offset: 0, perDay: 1 }, instagram: { on: true, offset: 0, perDay: 1 } })
+  // one target per (platform, kind): "youtube:video", "youtube:reel", "facebook:video", "facebook:reel", "tiktok:reel", "instagram:reel"
+  const targetList = X.PLATFORMS.flatMap(P => [...(P.hasVideo ? [[X.tkey(P.id, 'video'), X.targetLabel(P, 'video'), false, P.id]] : []), [X.tkey(P.id, 'reel'), X.targetLabel(P, 'reel'), true, P.id]])
+  const [t, setT] = useState(Object.fromEntries(targetList.map(([k, , reel]) => [k, reel ? { on: true, offset: 0, perDay: 1 } : { on: true, offset: 0 }])))
   const [rl, setRl] = useState({ ...cfg.reels, manual: '' })
   const chosen = order.map(k => vids.find(v => v.key === k)).filter(Boolean)
   const res = useMemo(() => { try { return X.buildEntries({ videos: chosen, start, gap, targets: t, reels: rl, cfg, existing: X.existingKeys(days), days }) } catch (e) { return { error: e.message } } }, [order.join('|'), start, gap, t, rl, days])
   const set = (k, patch) => setT({ ...t, [k]: { ...t[k], ...patch } })
   const move = (i, d) => { const a = [...order], j = i + d; if (j < 0 || j >= a.length) return;[a[i], a[j]] = [a[j], a[i]]; setOrder(a) }
-  const anyReel = t.ytReel.on || t.tiktok.on || t.instagram.on
-  const rows = [['ytVideo', 'YouTube · complete video', false, 'youtube'], ['ytReel', 'YouTube · Shorts', true, 'youtube'], ['tiktok', 'TikTok · reels', true, 'tiktok'], ['instagram', 'Instagram · reels', true, 'instagram']]
+  const anyReel = targetList.some(([k, , reel]) => reel && t[k].on), anyVideo = targetList.some(([k, , reel]) => !reel && t[k].on)
+  const rows = targetList
 
   const byDay = {}; (res.entries || []).forEach(e => (byDay[e.date] ||= []).push(e.item))
   const dayList = Object.entries(byDay).sort(), warn = []
@@ -83,7 +85,7 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
   ;[...new Set((res.entries || []).map(e => e.item.platform))].forEach(p => { if (!ready(cfg, p)) warn.push(`${X.platformOf(p).name} is not connected yet (see Setup). These items wait until it is.`) })
   const est = chosen[0]?.minutes && rl.cut !== 'manual' && anyReel ? Math.round(chosen[0].minutes * 60 / Math.max(1, +rl.count || 1)) : 0
   if (est > 90) warn.push(`With ${rl.count} reels, a ${chosen[0].minutes}-minute video gives about ${est} seconds each. That is long for a reel; add more parts.`)
-  const tag = items => { const g = {}; items.forEach(i => { const P = X.platformOf(i.platform), k = i.kind === 'video' ? 'YouTube video' : `${P.name} ${P.reelName.toLowerCase()}`; g[k] = (g[k] || 0) + 1 }); return Object.entries(g).map(([k, n]) => `${k} ×${n}`).join(' · ') }
+  const tag = items => { const g = {}; items.forEach(i => { const P = X.platformOf(i.platform), k = i.kind === 'video' ? `${P.name} video` : `${P.name} ${P.reelName.toLowerCase()}`; g[k] = (g[k] || 0) + 1 }); return Object.entries(g).map(([k, n]) => `${k} ×${n}`).join(' · ') }
   const go = () => run('Writing the day files…', async () => { await S.addEntries(w, res.entries); setOrder([]); await done() })
 
   return <div className="panel plan">
@@ -93,7 +95,7 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
       <button className="ghost sm" aria-label="Remove from selection" onClick={() => setOrder(order.filter(k => k !== v.key))}>×</button></li>)}</ol>
 
     <div className="cols"><label>First video goes out on<input type="date" value={start} min={X.todayISO()} onChange={e => setStart(e.target.value)} /></label>
-      {t.ytVideo.on && <label>Days between one complete video and the next<input type="number" min="0" value={gap} onChange={e => setGap(e.target.value)} /><small className="hint">0 = all on the same day, 1 = one a day, 2 = every other day.</small></label>}</div>
+      {anyVideo && <label>Days between one complete video and the next<input type="number" min="0" value={gap} onChange={e => setGap(e.target.value)} /><small className="hint">0 = all on the same day, 1 = one a day, 2 = every other day.</small></label>}</div>
 
     <h4>Where it goes</h4>
     {rows.map(([k, label, reel, pf]) => <div className="target" key={k}>
@@ -101,7 +103,7 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
       <span className="inl">starts +<input className="mini" type="number" min="0" value={t[k].offset} onChange={e => set(k, { offset: e.target.value })} /> day(s)</span>
       {reel && <span className="inl"><input className="mini" type="number" min="1" value={t[k].perDay} onChange={e => set(k, { perDay: e.target.value })} /> reel(s) a day</span>}
       {t[k].on && !ready(cfg, pf) && <small className="bad">not connected</small>}</div>)}
-    <p className="hint">“+ days” delays that target after the start day. Reels go out in the order you chose: every reel of video 1, then video 2, and so on, the number a day that you set for each platform. Days that already hold that many are skipped. TikTok and Instagram only get reels.</p>
+    <p className="hint">“+ days” delays that target after the start day. Reels go out in the order you chose: every reel of video 1, then video 2, and so on, the number a day that you set for each platform. Days that already hold that many are skipped. YouTube and Facebook can get the complete video and the reels; TikTok and Instagram only get reels.</p>
 
     {anyReel && <><h4>How to divide each video into reels</h4>
       <div className="cols">
@@ -110,7 +112,7 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
         <label>Vertical format<select value={rl.fit} onChange={e => setRl({ ...rl, fit: e.target.value })}><option value="blur">Whole picture on a blurred background</option><option value="crop">Centre crop to fill the screen</option></select></label>
         <label className="chk"><input type="checkbox" checked={rl.partLabel} onChange={e => setRl({ ...rl, partLabel: e.target.checked })} />Show “Part 1/5” on the reel</label></div>
       {rl.cut === 'manual' && <label>Time ranges, one reel per line<textarea rows={4} spellCheck="false" value={rl.manual} placeholder={'0:00-0:45\n0:45-1:30\n1:30-2:20'} onChange={e => setRl({ ...rl, manual: e.target.value })} /><small className="hint">Minutes:seconds. The same ranges are used for every selected video, so use this for one video at a time.</small></label>}
-      <p className="hint">The same cuts are used for YouTube Shorts, TikTok and Instagram. The backend reads these settings and cuts the reels itself.</p></>}
+      <p className="hint">The same cuts are used for YouTube Shorts, Facebook Reels, TikTok and Instagram. The backend reads these settings and cuts the reels itself.</p></>}
 
     <h4>Preview</h4>
     {res.error ? <p className="bad">{res.error}</p> : <>
@@ -187,8 +189,11 @@ function PlatformSettings({ pf, soc, run, saveCfg }) {
       <label>Shorts: title<input value={d.reelTitle} onChange={up('reelTitle')} /></label>
       <label>Shorts: description<textarea rows={3} value={d.reelDescription} onChange={up('reelDescription')} /></label></>
       : <>
-        <p className="muted">Channel: <b>{cur.channel_name || cur.channel_id || 'not chosen'}</b> (change it in Setup)</p>
-        <label>Caption<textarea rows={4} value={d.caption} onChange={up('caption')} /></label>
+        <p className="muted">{pf.id === 'facebook' ? 'Page' : 'Channel'}: <b>{cur.channel_name || cur.channel_id || 'not chosen'}</b> (change it in Setup)</p>
+        {pf.hasVideo ? <>
+          <label>Complete video: caption<textarea rows={4} value={d.videoCaption} onChange={up('videoCaption')} /></label>
+          <label>{pf.reelName}: caption<textarea rows={3} value={d.reelCaption} onChange={up('reelCaption')} /></label></>
+          : <label>Caption<textarea rows={4} value={d.caption} onChange={up('caption')} /></label>}
         <label>Default hashtags<input value={d.hashtags} onChange={up('hashtags')} /></label></>}
     <div className="row"><button className="cta sm" onClick={() => run('Saving…', async () => { await saveCfg({ ...soc.cfg, platforms: { ...soc.cfg.platforms, [pf.id]: { ...cur, ...d } } }); setOk(true) })}>Save {pf.name} settings</button>{ok && <span className="ok">Saved</span>}</div>
   </div>
@@ -198,8 +203,9 @@ function PlatformSettings({ pf, soc, run, saveCfg }) {
 export function Setup({ w, run, soc, saveCfg, clear }) {
   const cfg = soc.cfg, yt = cfg.accounts.youtube, bf = cfg.accounts.buffer
   const [show, setShow] = useState(false), [found, setFound] = useState({}), [msg, setMsg] = useState({})
-  const [keys, setKeys] = useState({ tiktok: bf.tiktok?.api_key || bf.api_key || '', instagram: bf.instagram?.api_key || bf.api_key || '' })
-  const [ch, setCh] = useState({ tiktok: { id: cfg.platforms.tiktok.channel_id, name: cfg.platforms.tiktok.channel_name }, instagram: { id: cfg.platforms.instagram.channel_id, name: cfg.platforms.instagram.channel_name } })
+  const BP = X.BUFFER_PLATFORMS.map(p => p.id)   // facebook, tiktok, instagram: each with its own Buffer key and channel
+  const [keys, setKeys] = useState(Object.fromEntries(BP.map(id => [id, bf[id]?.api_key || bf.api_key || ''])))
+  const [ch, setCh] = useState(Object.fromEntries(BP.map(id => [id, { id: cfg.platforms[id].channel_id, name: cfg.platforms[id].channel_name }])))
   const [tz, setTz] = useState(cfg.timezone), [rl, setRl] = useState(cfg.reels), [ok, setOk] = useState('')
   const connectYt = () => run('Connecting YouTube…', async () => {
     const j = await G.connectYouTube()
@@ -213,10 +219,10 @@ export function Setup({ w, run, soc, saveCfg, clear }) {
   })
   const saveBuffer = () => run('Saving Buffer…', async () => {
     const acc = pf => ({ api_key: keys[pf].trim(), organization_id: found[pf]?.organization_id || bf[pf]?.organization_id || bf.organization_id || '', connected_at: bf[pf]?.connected_at || isoNow() })
-    const buffer = { api_key: '', organization_id: '', connected_at: '', tiktok: acc('tiktok'), instagram: acc('instagram') }
+    const buffer = { api_key: '', organization_id: '', connected_at: '', ...Object.fromEntries(BP.map(id => [id, acc(id)])) }
     await saveCfg({ ...cfg, accounts: { ...cfg.accounts, buffer },
-      platforms: { ...cfg.platforms, tiktok: { ...cfg.platforms.tiktok, channel_id: ch.tiktok.id.trim(), channel_name: ch.tiktok.name }, instagram: { ...cfg.platforms.instagram, channel_id: ch.instagram.id.trim(), channel_name: ch.instagram.name } } })
-    await clear(['tiktok', 'instagram']); setOk('buffer')
+      platforms: { ...cfg.platforms, ...Object.fromEntries(BP.map(id => [id, { ...cfg.platforms[id], channel_id: ch[id].id.trim(), channel_name: ch[id].name }])) } })
+    await clear(BP); setOk('buffer')
   })
   const pick = (pf, id) => { const c = found[pf]?.channels.find(x => x.id === id); setCh({ ...ch, [pf]: { id, name: c?.name || '' } }) }
   const opts = pf => (found[pf]?.channels || []).filter(c => c.service.includes(pf))
@@ -226,8 +232,8 @@ export function Setup({ w, run, soc, saveCfg, clear }) {
     {msg[slot] && <p className="bad">{msg[slot]}</p>}
     {found[slot] && <p className="ok">Found {found[slot].channels.length} channel{found[slot].channels.length === 1 ? '' : 's'} in {found[slot].organization}.</p>}</div>
   const chanRow = pf => <div className="cols" key={pf}>
-    <label>{X.platformOf(pf).name} channel{opts(pf).length > 0 && <select value={ch[pf].id} onChange={e => pick(pf, e.target.value)}><option value="">Choose…</option>{opts(pf).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}</label>
-    <label>{X.platformOf(pf).name} channel ID<input value={ch[pf].id} onChange={e => setCh({ ...ch, [pf]: { id: e.target.value, name: ch[pf].name } })} placeholder="Found with “Find my channels”, or typed" /></label></div>
+    <label>{X.platformOf(pf).name} {pf === 'facebook' ? 'Page' : 'channel'}{opts(pf).length > 0 && <select value={ch[pf].id} onChange={e => pick(pf, e.target.value)}><option value="">Choose…</option>{opts(pf).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}</label>
+    <label>{X.platformOf(pf).name} {pf === 'facebook' ? 'Page' : 'channel'} ID<input value={ch[pf].id} onChange={e => setCh({ ...ch, [pf]: { id: e.target.value, name: ch[pf].name } })} placeholder="Found with “Find my channels”, or typed" /></label></div>
   return <section>
     <p className="muted">Everything here is saved once in <b>Frame AI / Social / social_config.json</b> in your Drive, and the backend reads it from there, so you never paste it twice. That file holds logins: keep the Social folder private.</p>
 
@@ -237,12 +243,12 @@ export function Setup({ w, run, soc, saveCfg, clear }) {
         {yt.refresh_token && <button className="ghost danger" onClick={() => run('Disconnecting…', () => saveCfg({ ...cfg, accounts: { ...cfg.accounts, youtube: { refresh_token: '', channel_id: '', channel_title: '', connected_at: '' } } }))}>Disconnect</button>}</div>
       <p className="hint">Uses YouTube’s own upload API. Before it works: turn on <b>YouTube Data API v3</b> in the same Google Cloud project and add the YouTube upload scope to the consent screen. Videos uploaded through a project that Google has not audited are forced to Private, so for public uploads apply for the YouTube API audit.</p></div>
 
-    <div className="panel"><h3>Buffer (TikTok and Instagram)</h3>
-      <p className="hint">Each platform has its own Buffer API key. If both are in the same Buffer account, paste the same key in both fields.</p>
-      {['tiktok', 'instagram'].map(pf => <div key={pf}><h4>{X.platformOf(pf).name}</h4>{keyBlock(pf, `${X.platformOf(pf).name} Buffer API key`)}{chanRow(pf)}</div>)}
+    <div className="panel"><h3>Buffer (Facebook, TikTok and Instagram)</h3>
+      <p className="hint">Each platform has its own Buffer API key. If they are all in the same Buffer account, paste the same key in each field.</p>
+      {BP.map(pf => <div key={pf}><h4>{X.platformOf(pf).name}</h4>{keyBlock(pf, `${X.platformOf(pf).name} Buffer API key`)}{chanRow(pf)}</div>)}
       <label className="chk"><input type="checkbox" checked={show} onChange={e => setShow(e.target.checked)} />Show keys</label>
       <div className="row"><a className="ghost" target="_blank" rel="noreferrer" href="https://publish.buffer.com/settings/api">Open Buffer API settings</a>
-        <button className="cta sm" disabled={!keys.tiktok.trim() && !keys.instagram.trim()} onClick={saveBuffer}>Save Buffer</button>{ok === 'buffer' && <span className="ok">Saved</span>}</div>
+        <button className="cta sm" disabled={!BP.some(id => keys[id].trim())} onClick={saveBuffer}>Save Buffer</button>{ok === 'buffer' && <span className="ok">Saved</span>}</div>
       <p className="hint">If “Find my channels” is blocked by the browser, open the Explorer on developers.buffer.com, list your channels there and paste the IDs. If they are different accounts, log in to each Buffer account to create its own key.</p></div>
 
     <div className="panel"><h3>Defaults</h3>

@@ -7,13 +7,13 @@ const { api, find, upload, getToken, enc, D, now } = G
 const auth = () => ({ Authorization: `Bearer ${getToken()}` })
 
 // ---------- JSON files ----------
-async function readJson(parent, name) {
+export async function readJson(parent, name) {
   const f = await find(name, parent)
   if (!f) return { file: null, data: null }
   const r = await fetch(`${D}/files/${f.id}?alt=media`, { headers: auth() })
   try { return { file: f.id, data: r.ok ? await r.json() : null } } catch { return { file: f.id, data: null } }
 }
-async function writeJson(parent, name, data, fileId) {
+export async function writeJson(parent, name, data, fileId) {
   const body = JSON.stringify(data, null, 2)
   if (fileId) {
     const r = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, { method: 'PATCH', headers: { ...auth(), 'Content-Type': 'application/json' }, body })
