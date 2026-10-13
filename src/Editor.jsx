@@ -72,8 +72,8 @@ const EXCSS = `
 .ex-tabs button.on{background:#2563eb;border-color:#2563eb;color:#fff}
 .ex-stage{min-width:0}
 .ex-cvw{position:relative;margin:0 auto;background:#000;border-radius:12px;overflow:hidden}
-.ex-cvw canvas{position:absolute;left:0;top:0;width:100%;height:100%}
-.ex-gz{touch-action:none}
+.ex .ex-cvw canvas{position:absolute;left:0;top:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;border-radius:0;box-shadow:none;background:#000;touch-action:none}
+.ex .ex-cvw canvas.ex-gz{background:transparent}
 .ex-empty,.ex-drop{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:16px;color:#fff;font-size:14px;pointer-events:none}
 .ex-empty{margin:10px;border:2px dashed rgba(255,255,255,.35);border-radius:12px}
 .ex-drop{background:rgba(37,99,235,.6);border:3px dashed #fff;font-weight:700;font-size:18px}
