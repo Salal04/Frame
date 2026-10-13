@@ -2,7 +2,7 @@
 import * as G from './drive.js'
 import * as P from './playlist.js'
 import { byOrder } from './config.js'
-import { withDefaults, snapshotVideo, planReschedule } from './socialPlan.js'
+import { withDefaults, snapshotVideo, planReschedule, applyPatch } from './socialPlan.js'
 const { api, find, upload, getToken, enc, D, now } = G
 const auth = () => ({ Authorization: `Bearer ${getToken()}` })
 
@@ -74,6 +74,21 @@ export async function addEntries(w, entries) {
   const by = {}; entries.forEach(e => (by[e.date] ||= []).push(e.item))
   for (const [date, items] of Object.entries(by).sort()) await mutateDay(w, date, d => { let o = nextOrder(d.items); items.forEach(it => d.items.push({ ...it, order: o++ })); return d })
   return entries.length
+}
+// change what will be posted (title, description, caption, tags, thumbnail, reel shape) of one planned item
+export const updateItem = (w, date, id, patch) => mutateDay(w, date, d => {
+  const i = d.items.findIndex(x => x.id === id)
+  if (i < 0) throw new Error('That item is no longer in the day file. Refresh.')
+  const it = d.items[i]
+  if (it.status === 'Uploaded' || it.status === 'Uploading') throw new Error('An item that is uploading or already uploaded cannot be edited.')
+  d.items[i] = applyPatch(it, patch)
+  return d
+})
+// a thumbnail picked for one upload goes to Frame AI / Social / Thumbnails; the backend reads it from the link
+export async function uploadThumb(w, file) {
+  const dir = await G.ensureFolder('Thumbnails', w.social.folderId)
+  const ext = file.name.includes('.') ? file.name.split('.').pop() : 'png'
+  return (await upload(new File([file], `thumb-${Date.now().toString(36)}.${ext}`, { type: file.type }), dir.id)).webViewLink
 }
 export const removeItem = (w, date, id) => mutateDay(w, date, d => ({ ...d, items: d.items.filter(i => i.id !== id) }))
 

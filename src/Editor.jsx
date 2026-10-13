@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import * as G from './drive.js'
 import * as P from './playlist.js'
+import { Confirm } from './Classic.jsx'
 
 // Browser video editor (v2). Tracks: V1 main (video / image / text slides), V2 (videos placed anywhere, with position, size, opacity),
 // Text & logo layer (opacity, fade), and 3 audio tracks: Voice (clip sound + voiceover), Background, Effects.
@@ -111,6 +112,10 @@ const EXCSS = `
 .tl-it.v2{background:#9333ea}.tl-it.txt{background:#d97706}.tl-it.img{background:#0d9488}
 .tl-it.voice{background:#dc2626}.tl-it.bg{background:#16a34a}.tl-it.fx{background:#db2777}
 .tl-hint{font-size:12px;opacity:.7;margin:6px 2px 0}
+.ex-opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:14px;border:1px solid rgba(127,127,127,.3);margin:6px 0;cursor:pointer;margin-top:6px}
+.ex-opt.on{border-color:#2563eb;background:rgba(37,99,235,.1)}.ex-opt.off{opacity:.5;cursor:not-allowed}
+.ex-opt input{margin-top:4px}.ex-opt span{display:flex;flex-direction:column;gap:2px}.ex-opt small{opacity:.75}
+.ex-sec{border-top:1px solid rgba(127,127,127,.3);margin-top:14px;padding-top:4px}
 @media (max-width:900px){.ex-top{grid-template-columns:1fr}.ex-left{max-height:none}}
 `
 
@@ -132,10 +137,11 @@ function drawBox(ctx, el, sw, sh, o, W, H, alpha) {
 
 const Rng = ({ l, v, set, min, max, step = .01, u = '' }) => <label>{l}: <b>{+(+v).toFixed(2)}{u}</b><input type="range" min={min} max={max} step={step} value={v} onChange={e => set(+e.target.value)} /></label>
 
-export default function Editor({ w, run, start }) {
+export default function Editor({ w, run, start, onSocial }) {
   const [main, setMain] = useState([]), [v2, setV2] = useState([]), [ov, setOv] = useState([]), [aud, setAud] = useState([]), [subs, setSubs] = useState([]), [look, setLook] = useState(LOOK0), [trk, setTrk] = useState(TRK0)
   const [sel, setSel] = useState(''), [tab, setTab] = useState('main'), [t, setT] = useState(0), [playing, setPlaying] = useState(false), [recording, setRecording] = useState(false)
   const [prog, setProg] = useState(null), [out, setOut] = useState(null), [list, setList] = useState(null), [link, setLink] = useState(''), [title, setTitle] = useState(start?.r?.title || '')
+  const [saved, setSaved] = useState(null), [saveMode, setSaveMode] = useState('copy'), [ask, setAsk] = useState(null)   // saved = what happened in Drive: { mode: 'copy' | 'replace', link, id, row }
   const [pps, setPps] = useState(40), [snapOn, setSnapOn] = useState(true), [dropLane, setDropLane] = useState(''), [fileOver, setFileOver] = useState(false), [vd, setVd] = useState(null), [guideX, setGuideX] = useState(null)
   const tm = timing(main, v2, aud, ov), S = useRef(), E = useRef({ t: 0, t0: 0, w0: 0, playing: false, raf: 0 }).current, D = useRef(() => { })
   const cv = useRef(), els = useRef({}), imgs = useRef({}), nodes = useRef({}), bx = useRef({}), drag = useRef(null), td = useRef(null), vdr = useRef(null), sc = useRef(false), routed = useRef({}), ovc = useRef(), tl = useRef(), KB = useRef({}), ac = useRef(), bus = useRef(), tg = useRef({}), vo = useRef(null), audTrack = useRef('bg')
@@ -479,7 +485,7 @@ export default function Editor({ w, run, start }) {
   const exportIt = () => run('Exporting… keep this tab open and in front', async () => {
     const s = S.current; if (!s.tm.total) throw new Error('Add something to the timeline first.')
     const mime = pickMime(); if (!mime) throw new Error('This browser cannot record video. Use Chrome or Edge.')
-    await ensureGraph(); const c = cv.current, [W, H] = dims(s.look, s.look.res, s.main.find(x => x.vw)); E.exporting = true; c.width = W; c.height = H; bus.current.mon.gain.value = 0; E.cancel = false; setOut(null); setLink('')
+    await ensureGraph(); const c = cv.current, [W, H] = dims(s.look, s.look.res, s.main.find(x => x.vw)); E.exporting = true; c.width = W; c.height = H; bus.current.mon.gain.value = 0; E.cancel = false; setOut(null); setLink(''); setSaved(null)
     try {
       await seek(0)
       const stream = c.captureStream(30); bus.current.dst.stream.getAudioTracks().forEach(x => stream.addTrack(x))
@@ -492,8 +498,41 @@ export default function Editor({ w, run, start }) {
     } finally { E.exporting = false; bus.current.mon.gain.value = 1; setProg(null); const [a, b] = dims(S.current.look, 540, S.current.main.find(x => x.vw)); c.width = a; c.height = b; draw() }
   })
   const cancel = () => { E.cancel = true; stop(false); const f = E.onEnd; E.onEnd = null; f?.() }
-  const toDrive = () => run('Saving to Drive…', async () => { const p = start?.p || w.singles, dir = await G.ensureFolder('Edited', p.folderId), r = await G.upload(new File([out.blob], `${title || 'edited'}.${out.ext}`, { type: out.blob.type }), dir.id); setLink(r.webViewLink) })
+  // ---------- saving: a new copy, or overwrite the video this edit started from, then optionally hand it to Social ----------
+  const srcId = idOf(start?.r?.output)                       // the Drive file this edit came from (only when opened with “Edit video”)
+  const fileName = () => `${title || 'edited'}.${out.ext}`
+  const doCopy = async () => {
+    const p = start?.p || w.singles, dir = await G.ensureFolder('Edited', p.folderId), r = await G.upload(new File([out.blob], fileName(), { type: out.blob.type }), dir.id)
+    const s = { mode: 'copy', link: r.webViewLink, id: r.id }; setLink(s.link); setSaved(s); return s
+  }
+  const doReplace = async () => {
+    if (!srcId) throw new Error('There is no original Drive video to replace. Save a new copy instead.')
+    const auth = { Authorization: `Bearer ${G.getToken()}` }, old = await G.api(`${G.D}/files/${srcId}?fields=name`).catch(() => null)
+    const name = old?.name && !old.name.toLowerCase().endsWith('.' + out.ext) ? old.name.replace(/\.[^.]+$/, '') + '.' + out.ext : undefined   // keep the extension honest (mp4 / webm)
+    const r = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${srcId}?uploadType=resumable&fields=id,webViewLink`, { method: 'PATCH', headers: { ...auth, 'Content-Type': 'application/json', 'X-Upload-Content-Type': out.blob.type || 'video/mp4' }, body: JSON.stringify(name ? { name } : {}) })
+    if (!r.ok) throw new Error('Drive did not let this app replace that file (it can only change files it created). Save a new copy instead.')
+    const u = await fetch(r.headers.get('Location'), { method: 'PUT', body: out.blob })
+    if (!u.ok) throw new Error('The upload stopped before it finished, so the original was not changed. Try again.')
+    const j = await u.json().catch(() => ({})), s = { mode: 'replace', link: j.webViewLink || start.r.output, id: srcId }; setLink(s.link); setSaved(s); return s
+  }
+  const toDrive = () => run('Saving a copy to Drive…', doCopy)
+  const replaceOriginal = () => run('Replacing the original video in Drive… keep this tab open', doReplace)
   const asOutput = () => run('Updating the Output link…', async () => { await P.saveVideo(start.p, { ...start.r, output: link }) })
+  // the video must be a Completed row in a playlist (or Singles) to be listed in Social: a copy becomes a new row, a replaced original already is one
+  const toSocial = confirmed => {
+    if (!saved && saveMode === 'replace' && !confirmed) return setAsk('social')
+    return run('Getting the video ready for Social…', async () => {
+      const s = saved || (saveMode === 'replace' ? await doReplace() : await doCopy()), p = start?.p || w.singles, r = start?.r
+      if (s.mode === 'replace') { if (r && !['Completed', 'Uploaded'].includes(r.status)) await P.saveVideo(p, { ...r, status: 'Completed' }) }
+      else if (!s.row) {
+        const a = look.aspect !== 'orig' ? look.aspect : Object.entries(ASP).sort((x, y) => Math.abs(x[1] - pw / ph) - Math.abs(y[1] - pw / ph))[0][0]
+        await P.loadVideos(p)
+        await P.saveVideo(p, { title: title || 'Edited video', topic: title || '', inputType: 'Prompt', status: 'Completed', output: s.link, minutes: +(dur / 60).toFixed(1), aspect: a, description: r?.description || '', thumbLink: r?.thumbLink || '', thumbText: r?.thumbText || '' })
+        setSaved({ ...s, row: true })
+      }
+      onSocial?.(idOf(s.link))
+    })
+  }
   const snap = () => cv.current.toBlob(b => save(b, `${title || 'frame'}.png`))
 
   // ---------- screen ----------
@@ -600,8 +639,20 @@ export default function Editor({ w, run, start }) {
         <div className="row tight"><button className="cta sm" disabled={prog !== null || !dur} onClick={exportIt}>{prog === null ? 'Export video' : `Exporting ${Math.round(prog * 100)}%`}</button>{prog !== null && <button className="ghost sm danger" onClick={cancel}>Cancel</button>}</div>
         {prog !== null && <progress value={prog} max="1" style={{ width: '100%' }} />}
         {out && <><h3>Done</h3><video src={out.url} controls style={{ maxWidth: '100%', maxHeight: '40vh', borderRadius: 16 }} />
-          <div className="row tight"><button className="cta sm" onClick={() => save(out.blob, `${title || 'edited'}.${out.ext}`)}>Download</button><button className="ghost" onClick={toDrive}>Save to Drive</button>{link && <a className="ghost" href={link} target="_blank" rel="noreferrer">Open in Drive</a>}{link && start?.r && <button className="ghost" onClick={asOutput}>Use as this video's Output link</button>}</div>
-          <p className="hint">Drive copies go to the “Edited” folder of the project.</p></>}</div>}
+          <div className="row tight"><button className="cta sm" onClick={() => save(out.blob, fileName())}>Download</button></div>
+
+          <div className="ex-sec"><h3>Save to Google Drive</h3>
+            <label className={'ex-opt' + (saveMode === 'copy' ? ' on' : '')}><input type="radio" name="ex-save" checked={saveMode === 'copy'} onChange={() => setSaveMode('copy')} /><span><b>Save as a new copy</b><small>Goes to the “Edited” folder of {start?.p?.name || 'Singles'}. The original video stays untouched.</small></span></label>
+            <label className={'ex-opt' + (saveMode === 'replace' ? ' on' : '') + (srcId ? '' : ' off')}><input type="radio" name="ex-save" disabled={!srcId} checked={saveMode === 'replace'} onChange={() => setSaveMode('replace')} /><span><b>Replace the original video</b><small>{srcId ? `Overwrites “${start.r.title}” in Drive. Same file and link, new picture and sound.` : 'Only possible when you opened this video with “Edit video” from a playlist.'}</small></span></label>
+            <div className="row tight"><button className="ghost" disabled={saved?.mode === saveMode} onClick={() => saveMode === 'replace' ? setAsk('save') : toDrive()}>{saved?.mode === saveMode ? 'Saved ✓' : saveMode === 'replace' ? 'Replace original in Drive' : 'Save copy to Drive'}</button>
+              {saved && <a className="ghost" href={saved.link} target="_blank" rel="noreferrer">Open in Drive</a>}
+              {saved?.mode === 'copy' && start?.r && <button className="ghost" onClick={asOutput}>Use as this video's Output link</button>}</div>
+            <p className="hint">{saved?.mode === 'replace' ? 'The original was replaced. Anything already planned in Social for this video will upload the new version.' : 'Copies go to the “Edited” folder of the project.'}</p></div>
+
+          <div className="ex-sec"><h3>Upload it</h3>
+            <div className="row tight"><button className="cta sm" onClick={() => toSocial()}>Schedule in Social →</button></div>
+            <p className="hint">{saved ? 'It is saved in Drive already. ' : `It is saved first (${saveMode === 'replace' ? 'replacing the original' : 'as a new copy'}). `}{saved?.mode === 'replace' || saveMode === 'replace' ? 'Then' : 'A new Completed video is added to the playlist so Social can list it. Then'} Social opens with it ticked: pick the days, then review the title, description, tags and thumbnail before anything goes out.</p></div></>}</div>}
+        {ask && <Confirm title="Replace the original video?" text={`This overwrites “${start?.r?.title}” in Google Drive with your edited video. The link stays the same, so anything already planned in Social for it will upload the new version. Drive usually keeps the previous version under “Manage versions” for about 30 days. If you are not sure, save a new copy instead.`} yes="Replace original" onYes={() => { const k = ask; setAsk(null); k === 'social' ? toSocial(true) : replaceOriginal() }} onNo={() => setAsk(null)} />}
         </>}
       </aside>
       <section className="ex-stage">

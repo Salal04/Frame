@@ -3,6 +3,7 @@ import * as G from './drive.js'
 import * as S from './social.js'
 import * as X from './socialPlan.js'
 import { Confirm } from './Classic.jsx'
+import Review, { ReviewRow, IssueChip, headline } from './SocialReview.jsx'
 
 // Social: decide WHICH finished video goes out on WHICH day, in WHAT order, and how it is cut into reels.
 // The backend reads the day file (Frame AI/Social/Days/<date>.json), picks the time of day and uploads.
@@ -10,7 +11,7 @@ const isoNow = () => new Date().toISOString()
 const ready = (cfg, id) => id === 'youtube' ? !!cfg.accounts.youtube.refresh_token : !!X.bufferAccount(cfg, id).api_key && !!cfg.platforms[id].channel_id
 const kindLabel = (pf, it) => it.kind === 'video' ? 'Complete video' : `${pf.reelName} ${it.reel?.part}/${it.reel?.of}`
 
-export default function Social({ w, run }) {
+export default function Social({ w, run, pick }) {
   const [tab, setTab] = useState('videos'), [pool, setPool] = useState(null), [days, setDays] = useState({}), [soc, setSoc] = useState(null), [needs, setNeeds] = useState([])
   const load = () => run('Reading your videos and the schedule…', async () => {
     const s = await S.loadSocial(w), [d, n, p] = await Promise.all([S.loadDays(w), S.loadNeeds(w), S.loadPool(w)])
@@ -20,6 +21,7 @@ export default function Social({ w, run }) {
   const saveCfg = async cfg => { await S.saveSocial(w, soc, cfg); setSoc({ ...soc }) }
   const clear = platforms => run('Clearing the request…', async () => { await S.clearNeeds(w, needs.filter(n => platforms.includes(n.platform) || !n.platform).map(n => n.id)); setNeeds(await S.loadNeeds(w)) })
   useEffect(() => { load() }, [])
+  const vids = useMemo(() => pool ? S.poolVideos(pool) : [], [pool])
   if (!soc || !pool) return <main className="page"><h2>Social</h2><p className="muted">Reading your videos and the schedule…</p></main>
 
   const late = id => X.itemsOf(days, id).filter(e => e.eff === 'Missed' || e.eff === 'Failed').length
@@ -29,8 +31,8 @@ export default function Social({ w, run }) {
       {needs.map(n => <div key={n.id || n.message}>{n.platform ? `${n.platform}: ` : ''}{n.message}</div>)}
       <div className="row tight"><button className="ghost sm" onClick={() => setTab('setup')}>Open Setup</button><button className="ghost sm" onClick={() => clear(needs.map(n => n.platform))}>Dismiss</button></div></div>}
     <div className="seg tabs">{[['videos', 'Videos'], ...X.PLATFORMS.map(p => [p.id, p.name + (late(p.id) ? ` (${late(p.id)})` : '')]), ['setup', 'Setup']].map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
-    {tab === 'videos' && <Videos w={w} run={run} pool={pool} days={days} soc={soc} reload={reload} />}
-    {X.PLATFORMS.map(p => tab === p.id && <Platform key={p.id} pf={p} w={w} run={run} soc={soc} days={days} reload={reload} saveCfg={saveCfg} goSetup={() => setTab('setup')} />)}
+    {tab === 'videos' && <Videos w={w} run={run} pool={pool} days={days} soc={soc} reload={reload} pick={pick} />}
+    {X.PLATFORMS.map(p => tab === p.id && <Platform key={p.id} pf={p} w={w} run={run} soc={soc} days={days} reload={reload} saveCfg={saveCfg} vids={vids} goSetup={() => setTab('setup')} />)}
     {tab === 'setup' && <Setup w={w} run={run} soc={soc} saveCfg={saveCfg} clear={clear} />}
     <div className="row"><button className="ghost" onClick={() => run('Refreshing…', reload)}>Refresh schedule</button>
       <a className="ghost" target="_blank" rel="noreferrer" href={`https://drive.google.com/drive/folders/${w.social.folderId}`}>Open Social folder</a></div>
@@ -38,9 +40,10 @@ export default function Social({ w, run }) {
 }
 
 // ====================================================================== VIDEOS: finished videos + planner
-export function Videos({ w, run, pool, days, soc, reload }) {
+export function Videos({ w, run, pool, days, soc, reload, pick }) {
   const vids = useMemo(() => S.poolVideos(pool), [pool]), by = useMemo(() => X.byVideoKey(days), [days])
-  const [order, setOrder] = useState([]), [only, setOnly] = useState('open')
+  const found = !!pick && vids.some(v => v.key === pick)   // a video that was just saved in the Editor arrives already ticked
+  const [order, setOrder] = useState(found ? [pick] : []), [only, setOnly] = useState('open')
   const shown = vids.filter(v => only === 'all' || !(by[v.key] || []).length)
   const toggle = k => setOrder(order.includes(k) ? order.filter(x => x !== k) : [...order, k])
   const pickable = shown.filter(X.isReady)
@@ -49,6 +52,8 @@ export function Videos({ w, run, pool, days, soc, reload }) {
     <div className="row tight"><div className="seg tabs" style={{ margin: 0 }}>{[['open', 'Not planned yet'], ['all', 'All finished']].map(([k, l]) => <button key={k} className={only === k ? 'on' : ''} onClick={() => setOnly(k)}>{l}</button>)}</div>
       <button className="ghost sm" disabled={!pickable.length} onClick={() => setOrder([...order, ...pickable.map(v => v.key).filter(k => !order.includes(k))])}>Select all shown</button>
       <button className="ghost sm" disabled={!order.length} onClick={() => setOrder([])}>Clear ({order.length})</button></div>
+    {pick && found && <p className="note">Your edited video is ticked below. Choose where and when it goes out, then review the text and thumbnail before adding it to the schedule.</p>}
+    {pick && !found && <p className="note">Your edited video was saved, but it is not in the list yet. Press “Refresh schedule” at the bottom, or check that it is marked Completed in its playlist.</p>}
     <p className="hint">Tick videos in the order you want them to go out. The number on each video is its place in that order.</p>
     {order.length > 0 && <Planner w={w} run={run} vids={vids} order={order} setOrder={setOrder} soc={soc} days={days} done={reload} />}
     <div className="cards one">
@@ -71,9 +76,11 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
   // one target per (platform, kind): "youtube:video", "youtube:reel", "facebook:video", "facebook:reel", "tiktok:reel", "instagram:reel"
   const targetList = X.PLATFORMS.flatMap(P => [...(P.hasVideo ? [[X.tkey(P.id, 'video'), X.targetLabel(P, 'video'), false, P.id]] : []), [X.tkey(P.id, 'reel'), X.targetLabel(P, 'reel'), true, P.id]])
   const [t, setT] = useState(Object.fromEntries(targetList.map(([k, , reel]) => [k, reel ? { on: true, offset: 0, perDay: 1 } : { on: true, offset: 0 }])))
-  const [rl, setRl] = useState({ ...cfg.reels, manual: '' })
+  const [rl, setRl] = useState({ ...cfg.reels, manual: '' }), [edits, setEdits] = useState({}), [rev, setRev] = useState(null), [showAll, setShowAll] = useState(false)
   const chosen = order.map(k => vids.find(v => v.key === k)).filter(Boolean)
   const res = useMemo(() => { try { return X.buildEntries({ videos: chosen, start, gap, targets: t, reels: rl, cfg, existing: X.existingKeys(days), days }) } catch (e) { return { error: e.message } } }, [order.join('|'), start, gap, t, rl, days])
+  // what the user changed in the review window, kept per upload so it survives a change of the planner settings
+  const final = useMemo(() => (res.entries || []).map(e => { const k = X.dupKey(e.item); return edits[k] ? { ...e, item: X.applyPatch(e.item, edits[k]) } : e }), [res, edits])
   const set = (k, patch) => setT({ ...t, [k]: { ...t[k], ...patch } })
   const move = (i, d) => { const a = [...order], j = i + d; if (j < 0 || j >= a.length) return;[a[i], a[j]] = [a[j], a[i]]; setOrder(a) }
   const anyReel = targetList.some(([k, , reel]) => reel && t[k].on), anyVideo = targetList.some(([k, , reel]) => !reel && t[k].on)
@@ -86,7 +93,7 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
   const est = chosen[0]?.minutes && rl.cut !== 'manual' && anyReel ? Math.round(chosen[0].minutes * 60 / Math.max(1, +rl.count || 1)) : 0
   if (est > 90) warn.push(`With ${rl.count} reels, a ${chosen[0].minutes}-minute video gives about ${est} seconds each. That is long for a reel; add more parts.`)
   const tag = items => { const g = {}; items.forEach(i => { const P = X.platformOf(i.platform), k = i.kind === 'video' ? `${P.name} video` : `${P.name} ${P.reelName.toLowerCase()}`; g[k] = (g[k] || 0) + 1 }); return Object.entries(g).map(([k, n]) => `${k} ×${n}`).join(' · ') }
-  const go = () => run('Writing the day files…', async () => { await S.addEntries(w, res.entries); setOrder([]); await done() })
+  const go = () => run('Writing the day files…', async () => { await S.addEntries(w, final); setOrder([]); await done() })
 
   return <div className="panel plan">
     <h3>Plan {chosen.length} video{chosen.length > 1 ? 's' : ''}</h3>
@@ -119,18 +126,29 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
       <p>{res.entries.length} upload{res.entries.length === 1 ? '' : 's'} over {dayList.length} day{dayList.length === 1 ? '' : 's'}{res.skipped.length > 0 && <span className="muted"> · {res.skipped.length} skipped because they are already planned</span>}</p>
       <div className="preview">{dayList.slice(0, 14).map(([d, items]) => <div key={d} className="prow"><b>{X.niceDay(d)}</b><span>{tag(items)}<small className="muted"> · {[...new Set(items.map(i => i.video.title))].join(', ').slice(0, 90)}</small></span></div>)}
         {dayList.length > 14 && <small className="muted">… and {dayList.length - 14} more days</small>}</div>
-      {warn.map((x, i) => <p className="note" key={i}>{x}</p>)}</>}
+      {warn.map((x, i) => <p className="note" key={i}>{x}</p>)}
+
+      <h4>Review before adding</h4>
+      <p className="hint">Open an upload to read or change its title, description, tags, caption and thumbnail, and to see how it looks in every shape. Anything you change applies to that upload only.</p>
+      <div className="panel">{final.slice(0, showAll ? final.length : 6).map((e, i) => <ReviewRow key={X.dupKey(e.item)} e={e} connected={ready(cfg, e.item.platform)} onOpen={() => setRev(i)} />)}
+        {final.length > 6 && <button className="link" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show fewer' : `Show all ${final.length} uploads`}</button>}</div></>}
+    {rev !== null && final[rev] && (() => { const e = final[rev], k = X.dupKey(e.item)
+      return <Review key={k} w={w} item={e.item} date={e.date} cfg={cfg} vids={vids} connected={ready(cfg, e.item.platform)} mode="draft" nav={{ i: rev, n: final.length, go: setRev }}
+        onClose={() => setRev(null)} onSave={async (patch, _day, next) => { setEdits(o => ({ ...o, [k]: patch })); setRev(next && rev < final.length - 1 ? rev + 1 : null); return '' }}
+        onReset={() => { setEdits(o => { const n = { ...o }; delete n[k]; return n }); setRev(null) }} /> })()}
     <div className="row"><button className="cta sm" disabled={!!res.error || !res.entries?.length} onClick={go}>Add to schedule</button><button className="ghost" onClick={() => setOrder([])}>Cancel</button></div>
   </div>
 }
 
 // ====================================================================== ONE PLATFORM
-export function Platform({ pf, w, run, soc, days, reload, saveCfg, goSetup }) {
+export function Platform({ pf, w, run, soc, days, reload, saveCfg, goSetup, vids }) {
   const today = X.todayISO(), all = useMemo(() => X.itemsOf(days, pf.id), [days])
   const late = all.filter(e => e.eff === 'Missed' || e.eff === 'Failed'), up = all.filter(e => e.eff === 'Planned' || e.eff === 'Uploading'), done = all.filter(e => e.eff === 'Uploaded')
-  const [bulk, setBulk] = useState({ start: today, per: 1 }), [del, setDel] = useState(null), [open, setOpen] = useState(false)
+  const [bulk, setBulk] = useState({ start: today, per: 1 }), [del, setDel] = useState(null), [open, setOpen] = useState(false), [rev, setRev] = useState(null)
   const act = (msg, fn) => run(msg, async () => { await fn(); await reload() })
   const groups = {}; up.forEach(e => (groups[e.date] ||= []).push(e))
+  const queue = [...late, ...up].filter(e => e.item.status !== 'Uploading'), conn = ready(soc.cfg, pf.id)   // what the review window steps through
+  const review = e => setRev(queue.findIndex(x => x.item.id === e.item.id))
   return <section>
     <div className="stats"><b>{(groups[today] || []).length}</b> today <b>{up.length}</b> planned <b>{done.length}</b> uploaded <b>{late.length}</b> need a new day</div>
     {!ready(soc.cfg, pf.id) && <p className="note">{pf.name} is not connected yet, so nothing can be uploaded. Planned items wait. <button className="link" onClick={goSetup}>Connect it in Setup</button></p>}
@@ -140,31 +158,38 @@ export function Platform({ pf, w, run, soc, days, reload, saveCfg, goSetup }) {
       <div className="row tight"><label className="inl">New start day<input type="date" min={today} value={bulk.start} onChange={e => setBulk({ ...bulk, start: e.target.value })} /></label>
         <label className="inl"><input className="mini" type="number" min="1" value={bulk.per} onChange={e => setBulk({ ...bulk, per: e.target.value })} /> per day</label>
         <button className="cta sm" disabled={!X.validDay(bulk.start) || bulk.start < today} onClick={() => act('Rescheduling…', () => S.moveMany(w, late, days, pf.id, bulk.start, bulk.per))}>Reschedule all</button></div>
-      {late.map(e => <ItemRow key={e.item.id} e={e} pf={pf} act={act} w={w} ask={setDel} />)}</div>}
+      {late.map(e => <ItemRow key={e.item.id} e={e} pf={pf} act={act} w={w} ask={setDel} review={review} conn={conn} />)}</div>}
 
     <h3>Coming up</h3>
     {!up.length && <p className="muted">Nothing planned. Choose finished videos in the Videos tab.</p>}
     {Object.entries(groups).sort().map(([d, list]) => <div className="panel day" key={d}>
       <div className="dayhead"><b>{X.niceDay(d)}</b><span className="chip-s">{list.length} upload{list.length > 1 ? 's' : ''}</span>{pf.id === 'youtube' && list.length > X.YT_DAILY && <span className="chip-s late">over the usual YouTube limit</span>}</div>
-      {list.map((e, i) => <ItemRow key={e.item.id} e={e} pf={pf} act={act} w={w} ask={setDel} first={!i} last={i === list.length - 1} />)}</div>)}
+      {list.map((e, i) => <ItemRow key={e.item.id} e={e} pf={pf} act={act} w={w} ask={setDel} review={review} conn={conn} first={!i} last={i === list.length - 1} />)}</div>)}
 
     {done.length > 0 && <><h3>Uploaded</h3><div className="panel">{done.slice(-20).reverse().map(e => <small className="line" key={e.item.id}>✓ {X.shortDay(e.date)} · {kindLabel(pf, e.item)} · {e.item.video.title}{e.item.result?.link && <> · <a href={e.item.result.link} target="_blank" rel="noreferrer">open</a></>}</small>)}</div></>}
 
     <div className="row"><button className="ghost" onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Show'} {pf.name} settings</button></div>
     {open && <PlatformSettings pf={pf} soc={soc} run={run} saveCfg={saveCfg} />}
+    {rev !== null && queue[rev] && (() => { const e = queue[rev]
+      return <Review key={e.item.id} w={w} item={e.item} date={e.date} cfg={soc.cfg} vids={vids} connected={conn} mode="saved" nav={{ i: rev, n: queue.length, go: setRev }} onClose={() => setRev(null)}
+        onSave={async (patch, day, next) => {
+          try { await S.updateItem(w, e.date, e.item.id, patch); if (day && day !== e.date) await S.moveItem(w, e.date, e.item.id, day); await reload(); setRev(next && rev < queue.length - 1 ? rev + 1 : null); return '' } catch (er) { return er.message }
+        }} /> })()}
     {del && <Confirm title={`Remove “${del.item.video.title}”?`} text={`It is taken off ${X.niceDay(del.date)} and will not be uploaded. The finished video itself stays untouched, and you can plan it again.`} yes="Remove" onYes={() => act('Removing…', async () => { await S.removeItem(w, del.date, del.item.id); setDel(null) })} onNo={() => setDel(null)} />}
   </section>
 }
 
-function ItemRow({ e, pf, act, w, ask, first, last }) {
+function ItemRow({ e, pf, act, w, ask, first, last, review, conn }) {
   const it = e.item, today = X.todayISO(), [to, setTo] = useState(e.date < today ? today : e.date), locked = it.status === 'Uploading'
-  const own = it.thumbnail?.source === 'video'
+  const own = it.thumbnail?.source === 'video', chk = X.checkItem(it, { connected: conn, date: e.date })
   return <div className="irow">
     <div className="grow"><span className="chip-s">{kindLabel(pf, it)}</span> <b>{it.video.title}</b>
+      <br /><small className="muted">Posts as: {headline(it)}{it.edited ? ' (edited)' : ''}</small>
       <br /><small className="muted">{it.video.single ? 'Singles' : it.video.project}{it.kind === 'video' && it.thumbnail ? ` · ${own ? 'own thumbnail' : 'thumbnail made from the project template'}` : ''}{it.reel?.cut ? ` · cut: ${it.reel.cut}` : ''}</small>
       {(e.eff === 'Missed' || e.eff === 'Failed') && <small className="bad"><br />{e.eff === 'Missed' ? `Was planned for ${X.shortDay(e.date)} and did not go out.` : 'The backend could not upload this.'}{it.result?.error ? ` ${it.result.error}` : ''}</small>}
       {locked && <small className="muted"><br />Uploading now…</small>}</div>
     {!locked && <div className="acts">
+      <IssueChip list={chk} /><button className="ghost sm" onClick={() => review(e)}>Review</button>
       {first !== undefined && <><button className="ghost sm" aria-label="Earlier in the day" disabled={first} onClick={() => act('Reordering…', () => S.nudge(w, e.date, it.id, -1))}>↑</button><button className="ghost sm" aria-label="Later in the day" disabled={last} onClick={() => act('Reordering…', () => S.nudge(w, e.date, it.id, 1))}>↓</button></>}
       <input type="date" min={today} value={to} onChange={ev => setTo(ev.target.value)} />
       <button className="ghost sm" disabled={!X.validDay(to) || to < today || to === e.date} onClick={() => act('Moving…', () => S.moveItem(w, e.date, it.id, to))}>Move</button>

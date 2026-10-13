@@ -24,9 +24,9 @@ export default function App() {
     {view.t === 'home' && <Playlists w={w} run={run} open={p => setView({ t: 'playlist', p })} />}
     {view.t === 'playlist' && <Playlist key={view.p.folderId} w={w} p={view.p} run={run} back={() => setView({ t: 'home' })} onEdit={(p, r) => setView({ t: 'editor', p, r })} />}
     {view.t === 'singles' && <Playlist key="singles" w={w} p={w.singles} single run={run} onEdit={(p, r) => setView({ t: 'editor', p, r })} />}
-    {view.t === 'editor' && <Editor key={view.r ? view.r.row + view.p.folderId : 'new'} w={w} run={run} start={view.r ? { p: view.p, r: view.r } : null} />}
+    {view.t === 'editor' && <Editor key={view.r ? view.r.row + view.p.folderId : 'new'} w={w} run={run} start={view.r ? { p: view.p, r: view.r } : null} onSocial={key => setView({ t: 'social', pick: key })} />}
     {view.t === 'production' && <Production w={w} run={run} />}
-    {view.t === 'social' && <Social w={w} run={run} />}
+    {view.t === 'social' && <Social key={view.pick || 'social'} w={w} run={run} pick={view.pick} />}
     {view.t === 'brand' && <Brand w={w} run={run} />}
     {view.t === 'control' && <ControlRoom g={w.g} run={run} />}
     {view.t === 'reqs' && <Requirements w={w} run={run} />}

@@ -6,7 +6,7 @@
 //   Days/2026-10-15.json    ONE FILE PER DAY. Everything planned for that calendar day, all platforms.
 //
 // The frontend decides the DAY and the ORDER. The exact time of day is left to the backend ("time": "auto").
-import { thumbnailFor, descriptionFor, mergeDeep, csv } from './config.js'
+import { thumbnailFor, descriptionFor, mergeDeep, csv, normAspect } from './config.js'
 
 export const PLATFORMS = [
   { id: 'youtube', name: 'YouTube', via: 'YouTube API', hasVideo: true, reelName: 'Shorts' },
@@ -74,6 +74,7 @@ export function snapshotVideo(d, r) {
     key: fid || `${d.p.folderId}|${r.row}`, project: d.p.name, projectId: d.p.folderId, single: !!d.p.isSingles, row: r.row, order: r.order,
     title: r.title, description: descriptionFor(d.cfg, r), minutes: +r.minutes || +d.cfg.minutes || 0, language: r.language || d.cfg.language || '',
     output: r.output || '', file_id: fid, status: r.status, thumbnail: thumbnailFor(d.cfg, r),
+    aspect: normAspect(r.aspect) || normAspect(d.cfg.aspect) || '16:9',   // shape of the finished video (used by the review preview)
   }
 }
 export const isReady = v => !!v.output
@@ -105,7 +106,7 @@ function makeItem(platform, kind, v, cfg, reel) {
   const ctx = { title: v.title, description: v.description, project: v.single ? '' : v.project, part: reel?.part ?? '', parts: reel?.of ?? '', hashtags: pc.hashtags || '' }
   return {
     id: newId(), platform, kind, order: 0, status: 'Planned', time: 'auto',   // time "auto" = the backend picks the time of day
-    video: { key: v.key, project: v.project, project_id: v.projectId, single: v.single, row: v.row, title: v.title, output: v.output, file_id: v.file_id, minutes: v.minutes, language: v.language },
+    video: { key: v.key, project: v.project, project_id: v.projectId, single: v.single, row: v.row, title: v.title, output: v.output, file_id: v.file_id, minutes: v.minutes, language: v.language, aspect: v.aspect || '16:9' },
     reel: reel || null,
     thumbnail: P.hasVideo && kind === 'video' ? v.thumbnail : null,   // YouTube and Facebook complete videos get the thumbnail
     title: isYt ? fill(kind === 'video' ? pc.videoTitle : pc.reelTitle, ctx).slice(0, 100) : '',
@@ -195,3 +196,57 @@ export function planReschedule(list, days, platform, start, perDay) {
   }
   return out
 }
+
+
+// ---------------------------------------------------------------- review before upload (pure helpers)
+// Limits that the platforms really enforce. Everything else is only advice.
+export const LIMITS = { ytTitle: 100, ytDesc: 5000, ytTags: 500, igCaption: 2200, igTags: 30, ttCaption: 2200 }
+export const hashtagsIn = s => String(s || '').match(/#[\p{L}\p{N}_]+/gu) || []
+// YouTube counts the tag text, the commas between tags and a pair of quotes around tags that hold a space
+export const tagChars = tags => (tags || []).reduce((n, t) => n + t.length + (/\s/.test(t) ? 2 : 0), 0) + Math.max(0, (tags || []).length - 1)
+export const arOf = a => { const [w, h] = String(a || '16:9').split(':').map(Number); return w > 0 && h > 0 ? w / h : 16 / 9 }
+
+// Apply the fields the user edited in the review window. Only edited fields are in a patch, so a later change of
+// the planner settings (reel count, ...) is not overwritten by stale copies of untouched fields.
+export const applyPatch = (it, p) => ({
+  ...it, ...p, edited: true,
+  publish: { ...it.publish, ...(p.publish || {}) },
+  reel: p.reel ? { ...(it.reel || {}), ...p.reel } : it.reel,
+  thumbnail: p.thumbnail !== undefined ? p.thumbnail : it.thumbnail,
+})
+
+// A list of {level: ok | info | warn | bad, text}. "bad" = will fail or is wrong, "warn" = worth a look.
+export function checkItem(it, { connected = true, date = '', today = todayISO() } = {}) {
+  const out = [], add = (level, text) => out.push({ level, text }), P = platformOf(it.platform), yt = it.platform === 'youtube', reel = it.kind === 'reel'
+  it.video?.output ? add('ok', 'The finished video file is linked.') : add('bad', 'The finished video has no output file, so there is nothing to upload.')
+  connected ? add('ok', `${P.name} is connected.`) : add('warn', `${P.name} is not connected yet (see Setup). This item waits until it is.`)
+  if (date) date < today ? add('bad', `The day (${shortDay(date)}) has passed. Give it a new day.`) : add('ok', `Goes out on ${niceDay(date)}. The backend picks the time.`)
+  if (yt) {
+    const t = (it.title || '').trim(), d = it.description || '', tags = it.publish?.tags || []
+    if (!t) add('bad', 'The title is empty.'); else if (t.length > LIMITS.ytTitle) add('bad', `The title is ${t.length} characters. YouTube allows ${LIMITS.ytTitle}.`); else add('ok', `Title: ${t.length}/${LIMITS.ytTitle} characters.`)
+    if (d.length > LIMITS.ytDesc) add('bad', `The description is ${d.length} characters. YouTube allows ${LIMITS.ytDesc}.`); else if (!d.trim()) add('warn', 'The description is empty. A few lines help people and search find the video.'); else add('ok', `Description: ${d.length}/${LIMITS.ytDesc} characters.`)
+    if (tagChars(tags) > LIMITS.ytTags) add('bad', `The tags are ${tagChars(tags)} characters. YouTube allows ${LIMITS.ytTags} in total.`); else if (!tags.length) add('warn', 'No tags. They help YouTube understand the topic.'); else add('ok', `${tags.length} tag${tags.length > 1 ? 's' : ''} (${tagChars(tags)}/${LIMITS.ytTags} characters).`)
+    if (reel && !/#shorts/i.test([t, d, ...tags].join(' '))) add('warn', 'No #shorts in the title or description. It is the clearest signal that this is a Short.')
+    const pv = it.publish?.privacy
+    add(pv === 'public' ? 'info' : 'warn', pv === 'public' ? 'Visibility is Public. If the Google project has not passed YouTube’s API audit, YouTube may still make it Private.' : `Visibility is ${pv}. Nobody will see it until you change that on YouTube.`)
+    add('info', it.publish?.made_for_kids ? 'Declared as made for kids: YouTube turns comments and some features off.' : 'Declared as not made for kids.')
+  } else {
+    const c = it.caption || '', tags = hashtagsIn(c)
+    if (!c.trim()) add('warn', 'The caption is empty.'); else add('ok', `Caption: ${c.length} characters${tags.length ? `, ${tags.length} hashtag${tags.length > 1 ? 's' : ''}` : ''}.`)
+    if (it.platform === 'instagram') { if (c.length > LIMITS.igCaption) add('bad', `The caption is ${c.length} characters. Instagram allows ${LIMITS.igCaption}.`); if (tags.length > LIMITS.igTags) add('bad', `${tags.length} hashtags. Instagram allows ${LIMITS.igTags}.`) }
+    if (it.platform === 'tiktok' && c.length > LIMITS.ttCaption) add('bad', `The caption is ${c.length} characters. Keep TikTok captions under ${LIMITS.ttCaption}.`)
+    if (!it.publish?.channel_id) add('warn', `No ${P.id === 'facebook' ? 'Page' : 'channel'} is chosen for ${P.name} (see Setup).`)
+  }
+  if (P.hasVideo && it.kind === 'video') {
+    const th = it.thumbnail
+    if (!th) add('warn', 'No thumbnail.'); else if (th.source === 'plain_background') add('warn', 'The project has no thumbnail template, so the thumbnail is a plain background with the title.'); else add('ok', th.source === 'video' ? 'This video has its own thumbnail.' : 'The thumbnail is made from the project template.')
+    if (yt && th) add('info', 'YouTube accepts custom thumbnails only on verified channels (phone verification).')
+  }
+  if (reel && it.reel) {
+    const sec = it.reel.range_sec ? Math.round(it.reel.range_sec[1] - it.reel.range_sec[0]) : it.video?.minutes && it.reel.of ? Math.round(it.video.minutes * 60 / it.reel.of) : 0
+    if (sec > 90) add('warn', `About ${sec} seconds. That is long for a reel; more parts make shorter reels.`); else if (sec) add('ok', `About ${sec} seconds per reel.`)
+    if (arOf(it.video?.aspect) > 1.2 && it.reel.fit === 'crop') add('info', 'A wide video cropped to vertical loses about two thirds of the picture. “Blurred background” keeps all of it.')
+  }
+  return out
+}
+export const issuesOf = list => list.filter(x => x.level === 'bad' || x.level === 'warn')
