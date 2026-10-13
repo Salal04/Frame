@@ -9,7 +9,7 @@ const cls = s => 'st-' + (s || 'Waiting').toLowerCase().replace(/\s+/g, '-')
 
 const tooLong = t => { if ((t || '').length > MAX_SCRIPT) throw new Error(`The script is ${t.length.toLocaleString()} characters. One sheet cell holds about 50,000, so split it into two videos.`) }
 
-function Row({ r, cfg, p, run, reload, gotoThumb, ask, single }) {
+function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single }) {
   const [e, setE] = useState(r), [open, setOpen] = useState(false), tf = useRef(), sf = useRef(), up = k => ev => setE({ ...e, [k]: ev.target.value })
   const save = () => run('Saving video…', async () => {
     if (e.inputType === 'Script') { if (!(e.script || '').trim()) throw new Error('This video is set to Script, but the script is empty.'); tooLong(e.script) }
@@ -43,7 +43,7 @@ function Row({ r, cfg, p, run, reload, gotoThumb, ask, single }) {
         {r.thumbLink && <button className="ghost" onClick={() => back({ thumbLink: '' }, 'Back to the default thumbnail…')}>Use default thumbnail</button>}
         <button className="ghost" onClick={() => gotoThumb(r.row)}>Thumbnail studio</button>
         {r.status !== 'Waiting' && <button className="ghost" onClick={() => back({ status: 'Waiting' }, 'Back to Waiting…')}>Set back to Waiting</button>}
-        {r.output && <a className="ghost" href={r.output} target="_blank" rel="noreferrer">Output</a>}<button className="ghost danger" onClick={() => ask(r)}>Remove</button></div></div>}
+        {r.output && <a className="ghost" href={r.output} target="_blank" rel="noreferrer">Output</a>}{r.output && <button className="ghost" onClick={() => gotoEdit(r)}>Edit video</button>}<button className="ghost danger" onClick={() => ask(r)}>Remove</button></div></div>}
   </div>
 }
 
@@ -70,7 +70,7 @@ function SheetImport({ p, rows, run, reload }) {
 
 const BLANK = { mode: 'Prompt', title: '', topic: '', script: '', minutes: '' }
 
-export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb, single }) {
+export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb, gotoEdit, single }) {
   const [nt, setNt] = useState(BLANK), [del, setDel] = useState(null), f = useRef(), sf = useRef()
   const reload = async () => setRows(await P.loadVideos(p))
   const total = rows.reduce((a, r) => a + (+r.minutes || +cfg.minutes || 0), 0), noOwn = rows.filter(r => !r.thumbLink).length, t = cfg.thumb || {}
@@ -109,7 +109,7 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
       <input ref={f} type="file" accept=".json,application/json" hidden onChange={importRes} /><button className="ghost" onClick={() => f.current.click()}>Import results</button>
       <a className="ghost" target="_blank" rel="noreferrer" href={`https://docs.google.com/spreadsheets/d/${p.sheetId}`}>Open sheet</a></div>
     <div className="cards one">{!rows.length && <p className="muted">No videos yet. Add the first prompt or script above, upload a sheet, or type rows straight into the Playlist sheet.</p>}
-      {rows.map(r => <Row key={[r.row, r.title, r.status, r.thumbLink].join('|')} single={single} r={r} cfg={cfg} p={p} run={run} reload={reload} gotoThumb={gotoThumb} ask={setDel} />)}</div>
+      {rows.map(r => <Row key={[r.row, r.title, r.status, r.thumbLink].join('|')} single={single} r={r} cfg={cfg} p={p} run={run} reload={reload} gotoThumb={gotoThumb} gotoEdit={gotoEdit} ask={setDel} />)}</div>
     {del && <Confirm title={`Remove “${del.title}”?`} text="The row is deleted from the Playlist sheet. Files in Drive stay." yes="Remove" onYes={() => run('Removing…', async () => { await P.deleteVideo(p, del); setDel(null); await reload() })} onNo={() => setDel(null)} />}
   </section>
 }
