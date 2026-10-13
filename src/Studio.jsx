@@ -7,7 +7,7 @@ import { connectBackend } from './drive.js'
 
 // ---------- one generic input: [path, label, type, hint, options] ----------
 function Field({ d, value, onChange }) {
-  const [, label, type, hint, opts] = d
+  const [, label, type, hint0, opts] = d, hint = typeof hint0 === 'function' ? hint0(value) : hint0
   if (type === 'bool') return <label className="chk"><input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />{label}</label>
   if (type === 'textarea') return <label className="wide">{label}<textarea rows={4} value={value ?? ''} onChange={e => onChange(e.target.value)} />{hint && <small className="hint">{hint}</small>}</label>
   return <label>{label}
