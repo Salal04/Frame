@@ -54,10 +54,22 @@ export const LIST_INFO = {
   'models.transcription': ['Transcription models', 'Stored for later. Not passed to VideoConfig yet.'],
 }
 
+// ---------------------------------------------------------------- ASPECT (frame shape)
+// '16:9' = wide (YouTube), '9:16' = vertical (Shorts/Reels/TikTok), '1:1' = square, '4:5' = portrait feed post.
+export const ASPECTS = [['16:9', '16:9 · Wide (YouTube)'], ['9:16', '9:16 · Vertical (Shorts, Reels, TikTok)'], ['1:1', '1:1 · Square'], ['4:5', '4:5 · Portrait (feed posts)']]
+export const normAspect = s => { const m = String(s ?? '').replace(/\s/g, '').replace(/[x×/]/gi, ':').match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/); if (!m) return ''; const k = `${+m[1]}:${+m[2]}`; return ASPECTS.some(a => a[0] === k) ? k : '' }
+export const aspectHint = a => {
+  const k = normAspect(a); if (!k) return ''
+  const [w, h] = k.split(':').map(Number)
+  if (w < h) return 'Vertical videos: the text is bigger and the layout stacks top to bottom.'
+  if (w === h) return 'Square videos: text is a little bigger and the layout stays compact.'
+  return 'Wide videos: text is normal size and the layout sits side by side.'
+}
+
 // ---------------------------------------------------------------- PROJECT (playlist)
 export const LANGS = [['en', 'English'], ['ur', 'Urdu']]
 export const PROJECT_DEFAULTS = {
-  language: 'en', screen_language: '', description: '', audience: 'curious beginners', minutes: 3,
+  language: 'en', screen_language: '', aspect: '16:9', description: '', audience: 'curious beginners', minutes: 3,
   voice: 'Kore', tts_style: 'calm, clear and friendly, like a good teacher', tts_engine: 'auto',
   tts_model: '', tts_strict: false, cloud_voices: '',
   scene_sec: 15, chapter_min: 2, min_steps_per_sentence: 2, max_scenes: 60, quality: 'medium', retries: 2, allow_latex: false,
@@ -66,6 +78,7 @@ export const PROJECT_DEFAULTS = {
 export const PROJECT_FIELDS = [
   ['language', 'Narration language', 'select', 'Script, voice and audio.', LANGS],
   ['screen_language', 'On-screen text language', 'select', '', [['', 'Same as narration'], ...LANGS]],
+  ['aspect', 'Default video shape (aspect ratio)', 'select', aspectHint, ASPECTS],
   ['description', 'Default description (added to every video)', 'textarea', "Goes under each video's own description. A video with no description of its own gets just this one."],
   ['audience', 'Audience', 'text', 'Sets the level of the script.'],
   ['minutes', 'Default length (minutes)', 'number', 'Used when a video row leaves Minutes empty.'],
@@ -114,14 +127,14 @@ export const ttsNote = m => /lite/.test(m) ? 'Lite: lighter, bigger free daily a
 // ---------------------------------------------------------------- playlist sheet (header name -> field)
 export const PLAYLIST_COLS = [
   ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
-  ['Audience', 'audience'], ['Language', 'language'], ['Screen Language', 'screen_language'], ['Voice', 'voice'],
+  ['Audience', 'audience'], ['Language', 'language'], ['Screen Language', 'screen_language'], ['Aspect', 'aspect'], ['Voice', 'voice'],
   ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Extra Config (JSON)', 'extra'],
   ['Output Link', 'output'], ['Notes', 'notes'], ['Updated', 'updated']]
 
 // ---------------------------------------------------------------- uploading a sheet into the Playlist sheet
 const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', scripttext: 'Script', voiceover: 'Script', inputtype: 'Input Type', type: 'Input Type', mode: 'Input Type', length: 'Minutes', duration: 'Minutes',
   desc: 'Description', videodescription: 'Description', thumbnail: 'Thumbnail Link', thumb: 'Thumbnail Link', thumbnailurl: 'Thumbnail Link', thumblink: 'Thumbnail Link',
-  thumbtext: 'Thumbnail Text', extra: 'Extra Config (JSON)', extraconfig: 'Extra Config (JSON)', output: 'Output Link', link: 'Output Link', no: '#', num: '#', number: '#', order: '#' }
+  aspectratio: 'Aspect', ratio: 'Aspect', shape: 'Aspect', thumbtext: 'Thumbnail Text', extra: 'Extra Config (JSON)', extraconfig: 'Extra Config (JSON)', output: 'Output Link', link: 'Output Link', no: '#', num: '#', number: '#', order: '#' }
 const CANON = Object.fromEntries(PLAYLIST_COLS.filter(c => c[0] !== '#').map(([h]) => [norm(h), h]))
 export const canonHeader = h => { const t = String(h ?? '').trim(); if (!t) return null; if (t === '#') return '#'; return CANON[norm(t)] || ALIAS[norm(t)] || null }
 
@@ -185,6 +198,7 @@ export function resolveJob(g, p, v, playlist) {
     input_type: isScript ? 'script' : 'prompt', script: isScript ? v.script.trim() : '',
     topic: (v.topic || v.title || '').trim(), minutes: +v.minutes || (isScript ? '' : +p.minutes || 3), audience: v.audience || p.audience,
     language: v.language || p.language, screen_language: v.screen_language || p.screen_language,
+    aspect: normAspect(v.aspect) || normAspect(p.aspect) || '16:9',   // row > project > built-in 16:9
     voice: v.voice || p.voice, tts_style: p.tts_style, tts_engine: p.tts_engine, cloud_voices: p.cloud_voices,
     light_models: csv(g.models.light).join(','), medium_models: csv(g.models.medium).join(','), code_models: csv(g.models.code).join(','), tts_models: tts.join(','),
     rpm: +g.limits.rpm, tts_rpm: +g.limits.tts_rpm, max_wait: +g.limits.max_wait, tts_group_scenes: +g.limits.tts_group_scenes, tts_group_chars: +g.limits.tts_group_chars, scene_batch: +g.limits.scene_batch,
