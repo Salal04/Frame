@@ -3,6 +3,8 @@ import * as P from './playlist.js'
 import * as G from './drive.js'
 import { STATUSES, VOICES, LANGS, ASPECTS, MAX_SCRIPT, buildJobs, normAspect, aspectHint } from './config.js'
 import { Confirm } from './Classic.jsx'
+import { EnginePicker, enginePhrase } from './Engine.jsx'
+import { engineLabel, estimateRender, normEngine } from './config.js'
 
 const inherit = (l = 'Playlist default') => [['', l]]
 const cls = s => 'st-' + (s || 'Waiting').toLowerCase().replace(/\s+/g, '-')
@@ -19,7 +21,7 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single }) {
   const back = (patch, msg) => run(msg, async () => { await P.saveVideo(p, { ...e, ...patch }); await reload() })
   return <div className={'card video ' + cls(r.status)}>
     <div className="vhead" onClick={() => setOpen(!open)}><span className="num">{r.order || r.row - 1}</span>
-      <div><h3>{r.title}</h3><small className="muted">{r.inputType === 'Script' ? 'own script' : 'prompt'} · {r.minutes || (r.inputType === 'Script' ? 'length from script' : cfg.minutes + ' min')}{r.minutes ? ' min' : ''} · {normAspect(r.aspect) ? r.aspect + ' (own)' : (normAspect(cfg.aspect) || '16:9') + ' (project)'} · {r.thumbLink ? 'own thumbnail' : 'default thumbnail'} · {single ? (r.description ? 'own description' : 'no description') : (r.description ? 'own description + project description' : 'project description')}</small></div>
+      <div><h3>{r.title}</h3><small className="muted">{r.inputType === 'Script' ? 'own script' : 'prompt'} · {r.minutes || (r.inputType === 'Script' ? 'length from script' : cfg.minutes + ' min')}{r.minutes ? ' min' : ''} · {normAspect(r.aspect) ? r.aspect + ' (own)' : (normAspect(cfg.aspect) || '16:9') + ' (project)'} · {enginePhrase(r.engine, r.engineFixed, cfg.engine, cfg.engine_fixed)} · {r.thumbLink ? 'own thumbnail' : 'default thumbnail'} · {single ? (r.description ? 'own description' : 'no description') : (r.description ? 'own description + project description' : 'project description')}</small></div>
       <span className="pill">{r.status}</span></div>
     {open && <div className="vbody">
       <label>Title<input value={e.title} onChange={up('title')} /></label>
@@ -35,6 +37,9 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single }) {
         <label>Screen language<select value={e.screen_language} onChange={up('screen_language')}>{[...inherit(), ...LANGS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <label>Aspect<select value={e.aspect} onChange={up('aspect')}>{[...inherit(`Project default (${normAspect(cfg.aspect) || '16:9'})`), ...ASPECTS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">{aspectHint(e.aspect || cfg.aspect || '16:9')}</small></label>
         <label>Voice<select value={e.voice} onChange={up('voice')}>{[...inherit('Playlist narrator'), ...VOICES.map(v => [v[0], `${v[0]} · ${v[1]}`])].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label></div>
+      <EnginePicker engine={e.engine} fixed={e.engineFixed} inherit={engineLabel(cfg.engine || 'auto')}
+        est={{ minutes: +e.minutes || cfg.minutes, scene_sec: cfg.scene_sec, quality: cfg.quality, max_scenes: cfg.max_scenes, engine: cfg.engine || 'auto' }}
+        onEngine={k => setE(c => ({ ...c, engine: k }))} onFixed={k => setE(c => ({ ...c, engineFixed: k }))} />
       <label>Extra config (JSON)<textarea rows={2} spellCheck="false" value={e.extra} placeholder='{"scene_sec": 10, "quality": "high"}' onChange={up('extra')} /><small className="hint">Any VideoConfig field. Beats every other level.</small></label>
       <label>Notes<textarea rows={2} value={e.notes} onChange={up('notes')} /></label>
       <p className="muted">Thumbnail: {r.thumbLink ? <><a href={r.thumbLink} target="_blank" rel="noreferrer">own thumbnail</a> (used for this video)</> : 'none of its own, the default template of this project is used'}</p>
@@ -75,6 +80,8 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
   const reload = async () => setRows(await P.loadVideos(p))
   const total = rows.reduce((a, r) => a + (+r.minutes || +cfg.minutes || 0), 0), noOwn = rows.filter(r => !r.thumbLink).length, t = cfg.thumb || {}
   const n = s => rows.filter(r => r.status === s).length
+  const waitMin = rows.filter(r => r.status === 'Waiting').reduce((a, r) => { const e = estimateRender({ minutes: +r.minutes || +cfg.minutes || 3, scene_sec: cfg.scene_sec, quality: cfg.quality, max_scenes: cfg.max_scenes, engine: normEngine(r.engine) || normEngine(cfg.engine) || 'auto' }); return [a[0] + e.sec[0] / 60, a[1] + e.sec[1] / 60] }, [0, 0])
+  const fmtT = m => m >= 90 ? `${Math.round(m / 6) / 10} h` : `${Math.round(m)} min`
   const add = () => {
     const ti = nt.title.trim(), tp = nt.topic.trim(), sc = nt.script.trim(), isScript = nt.mode === 'Script'
     if (isScript ? !sc : (!ti && !tp)) return
@@ -93,7 +100,7 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
   })
   const importRes = e => { const x = e.target.files[0]; e.target.value = ''; if (x) run('Reading results…', async () => { const k = await P.importResults(p, rows, JSON.parse(await x.text())); await reload(); if (!k) throw new Error('No row in that file matches this playlist.') }) }
   return <section>
-    <div className="stats"><b>{rows.length}</b> videos <b>{Math.round(total * 10) / 10}</b> minutes · {STATUSES.map(s => n(s) ? `${n(s)} ${s.toLowerCase()}` : '').filter(Boolean).join(' · ')}</div>
+    <div className="stats"><b>{rows.length}</b> videos <b>{Math.round(total * 10) / 10}</b> minutes · {waitMin[1] > 0 && <>waiting videos need about {waitMin[0] === waitMin[1] ? fmtT(waitMin[0]) : `${fmtT(waitMin[0])} to ${fmtT(waitMin[1])}`} to build · </>}{STATUSES.map(s => n(s) ? `${n(s)} ${s.toLowerCase()}` : '').filter(Boolean).join(' · ')}</div>
     {noOwn > 0 && <p className="note">{noOwn} video{noOwn > 1 ? 's have' : ' has'} no thumbnail of its own, so the default template {t.templateName ? <b>{t.templateName}</b> : <b>(none uploaded yet, a plain background is used)</b>} is used and the backend writes the title on it. <button className="link" onClick={() => gotoThumb('')}>Set the default template</button></p>}
     <div className="seg tabs">{[['Prompt', 'From a prompt'], ['Script', 'I have a script']].map(([k, l]) => <button key={k} className={nt.mode === k ? 'on' : ''} onClick={() => setNt({ ...nt, mode: k })}>{l}</button>)}</div>
     <p className="hint">{nt.mode === 'Prompt' ? 'Give a topic and Frame writes the script, then makes the video.' : 'Paste or upload your finished script. Frame uses it as written and only makes the video.'}</p>

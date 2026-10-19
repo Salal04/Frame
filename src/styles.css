@@ -189,3 +189,8 @@ nav .drop button:hover,.drop a:hover{background:var(--bg)}
 .ed-ph{position:absolute;top:0;bottom:0;width:2px;background:var(--red);pointer-events:none;z-index:2}
 .ed label{display:block;margin:8px 0}.ed label.chk{display:inline-flex;gap:8px;align-items:center}.ed input[type=range]{width:100%;padding:0;background:none;box-shadow:none}
 .ed .pick{max-height:220px;overflow:auto;margin-top:8px}.ed .trk{border-top:1px solid rgba(112,96,185,.2);padding-top:8px;margin-top:10px}.ed .trk:first-of-type{border:0;margin-top:0}.ed .ghost.on{outline:3px solid var(--bolt)}
+
+/* engine picker */
+.engine .chips{margin:.5rem 0}
+.engine .chip[aria-checked="true"]{outline:2px solid currentColor}
+.engine .est{margin:.6rem 0 0}
