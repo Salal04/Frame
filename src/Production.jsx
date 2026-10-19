@@ -26,9 +26,13 @@ export default function Production({ w, run }) {
   const cnt = id => countStatus(data.find(d => d.p.folderId === id)?.rows || [])
   const download = o => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(o, null, 2)], { type: 'application/json' })); a.download = 'frame_jobs_all.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000) }
   const exportAll = () => run('Building the jobs file…', async () => {
-    if (!queue.length) throw new Error('Nothing is waiting in an active project.')
+    if (!queue.length) throw new Error('Nothing is waiting in an active project (videos on Hold are not sent).')
     if (dirty) await save()
-    download(buildJobsAll(w.g.cfg, plan, data, queue))
+    let moved = false   // every Waiting video needs its Input/Output folder before the backend can use it
+    for (const d of data) if (await P.prepareFolders(d.p, d.rows)) { d.rows = await P.loadVideos(d.p); moved = true }
+    if (moved) setData([...data])
+    const q = moved ? buildQueue(plan, waitingOf(data)) : queue
+    download(buildJobsAll(w.g.cfg, plan, data, q))
   })
   const importRes = e => { const x = e.target.files[0]; e.target.value = ''; if (!x) return; run('Reading results…', async () => {
     const res = JSON.parse(await x.text()); let n = 0
@@ -59,7 +63,7 @@ export default function Production({ w, run }) {
         <div className="pjhead"><label className="chk"><input type="checkbox" checked={sel.includes(x.id)} onChange={() => toggle(x.id)} /><b>{x.name}</b></label>
           <span className="pill">{x.state === 'paused' ? 'Paused' : 'Active'}</span>
           <span className="arrows"><button className="ghost sm" aria-label="Move up" disabled={!i} onClick={() => move(i, -1)}>↑</button><button className="ghost sm" aria-label="Move down" disabled={i === plan.projects.length - 1} onClick={() => move(i, 1)}>↓</button></span></div>
-        <small className="muted">{c.Waiting} waiting · {c['In Process']} in process · {c.Completed} completed · {c.Uploaded} uploaded{c.Failed ? ` · ${c.Failed} failed` : ''} · {x.state === 'paused' ? 'skipped while paused' : pauseText(x)}</small>
+        <small className="muted">{c.Hold} on hold · {c.Waiting} waiting · {c['In Process']} in process · {c.Completed} completed · {c.Uploaded} uploaded{c.Failed ? ` · ${c.Failed} failed` : ''} · {x.state === 'paused' ? 'skipped while paused' : pauseText(x)}</small>
         {plan.order === 'rotate' && <label className="inl">Videos per turn<input className="mini" type="number" min="1" value={x.perTurn} onChange={e => edit([x.id], { perTurn: Math.max(1, +e.target.value || 1) })} /></label>}</div> })}</div>
     <div className="row"><button className="cta sm" disabled={!dirty} onClick={() => run('Saving the plan…', save)}>{dirty ? 'Save plan' : 'Plan saved'}</button>
       <button className="ghost" onClick={load}>Refresh</button><button className="ghost" onClick={exportAll}>Download jobs for backend (all projects)</button>
@@ -69,7 +73,7 @@ export default function Production({ w, run }) {
       {w.recSheet && <a className="ghost" target="_blank" rel="noreferrer" href={`https://docs.google.com/spreadsheets/d/${w.recSheet}`}>Open record sheet</a>}</div>
 
     <h3>Next up</h3>
-    {queue[0] ? <p className="next"><b>{queue[0].playlist}</b> · #{queue[0].row.order || queue[0].row.row - 1} {queue[0].row.title}</p> : <p className="muted">Nothing is waiting in an active project.</p>}
+    {queue[0] ? <p className="next"><b>{queue[0].playlist}</b> · #{queue[0].row.order || queue[0].row.row - 1} {queue[0].row.title}</p> : <p className="muted">Nothing is waiting in an active project. Videos on Hold are not sent to the backend.</p>}
     {queue.length > 1 && <ol className="queue">{queue.slice(1, 26).map((q, i) => <li key={q.projectId + q.row.row}><span className="muted">{q.playlist}</span> {q.row.title}{q.pauseAfterMin > 0 && <span className="chip-s">pause {q.pauseAfterMin} min after</span>}</li>)}{queue.length > 26 && <li className="muted">… and {queue.length - 26} more</li>}</ol>}
     {rec.paused_projects.length > 0 && <p className="hint">Paused, not in the queue: {rec.paused_projects.join(', ')}</p>}
 

@@ -1,7 +1,8 @@
 // Drive layer for the pipeline: JSON config files, the per-playlist "Playlist" sheet, thumbnails.
 import * as G from './drive.js'
-import { PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, mergeDeep, normStatus, normInput, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
+import { PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
 const { api, find, ensureFolder, put, read, append, log, safe, now, upload, delRow, getToken, enc, D, S } = G
+const mkFolder = (name, parent) => api(`${D}/files?fields=id`, { method: 'POST', body: JSON.stringify({ name, mimeType: G.FOLDER, parents: [parent] }) })
 const auth = () => ({ Authorization: `Bearer ${getToken()}` })
 const colL = n => { let s = ''; for (n++; n; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s }
 
@@ -79,14 +80,71 @@ export async function loadVideos(p) {
   }).filter(o => o.title || o.topic || o.script)
 }
 
-export async function saveVideo(p, o) {
+// ---------- one Drive folder per video:  <playlist>/Videos/<NN - title>/  with  Input/  and  Output/ ----------
+//   Input/   what the video is made from: input.json (the full request), script.txt or prompt.txt, description.txt
+//   Output/  everything the backend produces for it: video, thumbnail, audio, logs ...
+const folderLink = id => `https://drive.google.com/drive/folders/${id}`
+const vName = o => `${String(o.order || (o.row ? o.row - 1 : 0) || 0).padStart(2, '0')} - ${(o.title || 'video').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)}`
+export async function ensureVideoFolder(p, o) {
+  if (o.folderId && o.inputFolderId && o.outputFolderId) return {}
+  const parent = await ensureFolder('Videos', p.folderId)
+  const dir = o.folderId ? { id: o.folderId } : await mkFolder(vName(o), parent.id)
+  const [i, out] = await Promise.all([o.inputFolderId ? { id: o.inputFolderId } : ensureFolder('Input', dir.id), o.outputFolderId ? { id: o.outputFolderId } : ensureFolder('Output', dir.id)])
+  return { folderId: dir.id, inputFolderId: i.id, outputFolderId: out.id, folderLink: folderLink(dir.id) }
+}
+async function putText(parent, name, text, type = 'text/plain') {
+  const old = await find(name, parent)
+  if (!old) return upload(new File([text], name, { type }), parent)
+  const r = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${old.id}?uploadType=media`, { method: 'PATCH', headers: { ...auth(), 'Content-Type': type }, body: text })
+  if (!r.ok) throw new Error(`Could not save ${name}`)
+}
+// the input side of the folder: a plain snapshot of what the user typed, so the folder is self-contained
+async function writeInput(o) {
+  const isScript = o.inputType === 'Script'
+  const input = { title: o.title, input_type: isScript ? 'script' : 'prompt', topic: o.topic || '', script: isScript ? o.script || '' : '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', extra: o.extra || '', saved: now() }
+  await putText(o.inputFolderId, 'input.json', JSON.stringify(input, null, 2), 'application/json')
+  if (isScript) await putText(o.inputFolderId, 'script.txt', o.script || '')
+  else await putText(o.inputFolderId, 'prompt.txt', o.topic || o.title || '')
+  if ((o.description || '').trim()) await putText(o.inputFolderId, 'description.txt', o.description)
+}
+
+// opts.backend = a result coming from the backend (may set any status). opts.system = the app itself finished a video (editor).
+// Otherwise it is the USER: they may only move a video between Hold and Waiting, and never once the backend has taken it.
+export async function saveVideo(p, o, opts = {}) {
+  const by = opts.backend || opts.system, existing = !!o.row
+  const prev = existing ? normStatus(o.raw?.['Status']) : null
+  let next = normStatus(o.status ?? prev ?? 'Hold'), live = prev
+  if (!by) {
+    if (existing) {   // look at the sheet itself: the backend may have started this video after the page was loaded
+      const col = colL(p.head.indexOf('Status'))
+      live = normStatus((await read(p.sheetId, `Playlist!${col}${o.row}`))[0]?.[0])
+      if (isLocked(live)) { if (next !== live && next !== prev) throw new Error(`“${o.title}” is already ${live} on the backend, so its status can no longer be changed here.`); next = live }
+      else if (!canUserSet(live, next)) throw new Error(`Only Hold and Waiting can be set by hand. “${next}” is set by the backend.`)
+    } else if (isLocked(next)) throw new Error('A new video must start on Hold or Waiting.')
+  }
+  o = { ...o, status: next }
+  const locked = isLocked(next)
+  if (!locked || !o.folderId) o = { ...o, ...await ensureVideoFolder(p, o) }
   const raw = { ...(o.raw || {}) }
   PLAYLIST_COLS.forEach(([h, k]) => { if (k in o) raw[h] = o[k] })
   raw['Updated'] = now()
   const arr = p.head.map(h => safe(String(raw[h] ?? '')))   // user-added columns pass through untouched
   if (o.row) await put(p.sheetId, `Playlist!A${o.row}:${colL(p.head.length - 1)}${o.row}`, [arr])
   else await append(p.sheetId, 'Playlist', arr)
-  await log(p.sheetId, o.row ? 'Video saved' : 'Video added', o.title || '')
+  if (!locked && o.inputFolderId) await writeInput(o)   // once the backend has the video, its input snapshot stays as it was
+  await log(p.sheetId, o.row ? (prev !== next ? `Video ${prev} → ${next}` : 'Video saved') : 'Video added', o.title || '')
+}
+// a Waiting video must have its folder before the backend can write into it: build the missing ones, then the caller reloads
+export async function prepareFolders(p, rows) {
+  let n = 0
+  for (const r of rows) if (r.status === 'Waiting' && !(r.folderId && r.inputFolderId && r.outputFolderId)) { await saveVideo(p, r); n++ }
+  return n
+}
+// Hold -> Waiting for many videos at once (the user releases them to the backend)
+export async function releaseAll(p, rows) {
+  let n = 0
+  for (const r of rows) if (r.status === 'Hold') { await saveVideo(p, { ...r, status: 'Waiting' }); n++ }
+  return n
 }
 export async function deleteVideo(p, o) { await delRow(p.sheetId, p.tabId, o.row - 2); await log(p.sheetId, 'Video removed', o.title) }
 
@@ -95,7 +153,7 @@ export async function importResults(p, rows, results) {
   let n = 0
   for (const r of results) {
     const row = rows.find(x => x.row === r.row && x.title === r.title)
-    if (row) { await saveVideo(p, { ...row, status: normStatus(r.status), output: r.output || row.output || '' }); n++ }
+    if (row) { await saveVideo(p, { ...row, status: normStatus(r.status), output: r.output || row.output || '' }, { backend: true }); n++ }
   }
   return n
 }

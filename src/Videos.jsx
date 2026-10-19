@@ -1,13 +1,13 @@
 import { useState, useRef } from 'react'
 import * as P from './playlist.js'
 import * as G from './drive.js'
-import { STATUSES, VOICES, LANGS, ASPECTS, MAX_SCRIPT, buildJobs, normAspect, aspectHint } from './config.js'
+import { STATUSES, isLocked, VOICES, LANGS, ASPECTS, MAX_SCRIPT, buildJobs, normAspect, aspectHint } from './config.js'
 import { Confirm } from './Classic.jsx'
 import { EnginePicker, enginePhrase } from './Engine.jsx'
 import { engineLabel, estimateRender, normEngine } from './config.js'
 
 const inherit = (l = 'Playlist default') => [['', l]]
-const cls = s => 'st-' + (s || 'Waiting').toLowerCase().replace(/\s+/g, '-')
+const cls = s => 'st-' + (s || 'Hold').toLowerCase().replace(/\s+/g, '-')
 
 const tooLong = t => { if ((t || '').length > MAX_SCRIPT) throw new Error(`The script is ${t.length.toLocaleString()} characters. One sheet cell holds about 50,000, so split it into two videos.`) }
 
@@ -24,6 +24,13 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single }) {
       <div><h3>{r.title}</h3><small className="muted">{r.inputType === 'Script' ? 'own script' : 'prompt'} · {r.minutes || (r.inputType === 'Script' ? 'length from script' : cfg.minutes + ' min')}{r.minutes ? ' min' : ''} · {normAspect(r.aspect) ? r.aspect + ' (own)' : (normAspect(cfg.aspect) || '16:9') + ' (project)'} · {enginePhrase(r.engine, r.engineFixed, cfg.engine, cfg.engine_fixed)} · {r.thumbLink ? 'own thumbnail' : 'default thumbnail'} · {single ? (r.description ? 'own description' : 'no description') : (r.description ? 'own description + project description' : 'project description')}</small></div>
       <span className="pill">{r.status}</span></div>
     {open && <div className="vbody">
+      <div className="statusbox">
+        {isLocked(r.status)
+          ? <p className="muted">🔒 <b>{r.status}</b>: the backend has taken this video, so its status can no longer be changed here.</p>
+          : <><div className="seg tabs">{[['Hold', 'Hold (backend must not start it)'], ['Waiting', 'Waiting (backend may start it)']].map(([k, l]) => <button key={k} className={r.status === k ? 'on' : ''} disabled={r.status === k} onClick={() => back({ status: k }, k === 'Waiting' ? 'Releasing to the backend…' : 'Putting on Hold…')}>{l}</button>)}</div>
+            <small className="hint">You can switch between Hold and Waiting until the backend starts the video. After that the status belongs to the backend.</small></>}
+        {r.folderLink ? <small className="muted">Video folder: <a href={r.folderLink} target="_blank" rel="noreferrer">open</a> (Input · Output)</small> : <small className="muted">The video folder (Input / Output) is created when you save it.</small>}
+      </div>
       <label>Title<input value={e.title} onChange={up('title')} /></label>
       <label>This video is made from<select value={e.inputType} onChange={up('inputType')}><option value="Prompt">A prompt (Frame writes the script)</option><option value="Script">My own script (Frame uses it as written)</option></select></label>
       {e.inputType === 'Script'
@@ -47,7 +54,6 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single }) {
         <input ref={tf} type="file" accept="image/*" hidden onChange={own} /><button className="ghost" onClick={() => tf.current.click()}>{r.thumbLink ? 'Replace own thumbnail' : 'Upload own thumbnail'}</button>
         {r.thumbLink && <button className="ghost" onClick={() => back({ thumbLink: '' }, 'Back to the default thumbnail…')}>Use default thumbnail</button>}
         <button className="ghost" onClick={() => gotoThumb(r.row)}>Thumbnail studio</button>
-        {r.status !== 'Waiting' && <button className="ghost" onClick={() => back({ status: 'Waiting' }, 'Back to Waiting…')}>Set back to Waiting</button>}
         {r.output && <a className="ghost" href={r.output} target="_blank" rel="noreferrer">Output</a>}{r.output && <button className="ghost" onClick={() => gotoEdit(r)}>Edit video</button>}<button className="ghost danger" onClick={() => ask(r)}>Remove</button></div></div>}
   </div>
 }
@@ -66,7 +72,7 @@ function SheetImport({ p, rows, run, reload }) {
       <p className="muted"><b>Matched columns:</b> {a.matched.join(', ') || 'none'}</p>
       {a.added.length > 0 && <p className="muted"><b>New columns, added to your sheet:</b> {a.added.join(', ')}</p>}
       {a.absent.length > 0 && <p className="muted"><b>Not in your file, left empty (defaults are used):</b> {a.absent.join(', ')}</p>}
-      <p className="muted">Status becomes Waiting when empty. Numbering continues automatically.</p>
+      <p className="muted">Every imported video starts on Hold (only Hold or Waiting is accepted from a file). Numbering continues automatically.</p>
       <div className="row tight"><button className="cta sm" disabled={!a.hasKey || !a.count} onClick={() => go('append')}>Append to current sheet</button>
         <button className="ghost danger" disabled={!a.hasKey || !a.count} onClick={() => setAsk(true)}>Replace current sheet</button><button className="ghost" onClick={() => setT(null)}>Cancel</button></div></>}
     {ask && <Confirm title="Replace the whole sheet?" text={`All ${rows.length} current videos in this project's Playlist sheet are removed and the ${a.count} from the file take their place. Statuses of the old videos are lost.`} yes="Replace" onYes={() => go('replace')} onNo={() => setAsk(false)} />}
@@ -88,21 +94,23 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
     run(single ? 'Adding the video…' : 'Adding to the playlist…', async () => {
       if (isScript) tooLong(sc)
       await P.saveVideo(p, isScript
-        ? { order: rows.length + 1, title: ti || sc.slice(0, 60), topic: '', inputType: 'Script', script: sc, minutes: nt.minutes, status: 'Waiting' }
-        : { order: rows.length + 1, title: ti || tp.slice(0, 60), topic: tp || ti, inputType: 'Prompt', script: '', minutes: nt.minutes || cfg.minutes, status: 'Waiting' })
+        ? { order: rows.length + 1, title: ti || sc.slice(0, 60), topic: '', inputType: 'Script', script: sc, minutes: nt.minutes, status: 'Hold' }
+        : { order: rows.length + 1, title: ti || tp.slice(0, 60), topic: tp || ti, inputType: 'Prompt', script: '', minutes: nt.minutes || cfg.minutes, status: 'Hold' })
       setNt({ ...BLANK, mode: nt.mode }); await reload() })
   }
   const pickScript = ev => { const x = ev.target.files[0]; ev.target.value = ''; if (x) run('Reading the script…', async () => { const t = await G.readTextFile(x); tooLong(t); setNt(c => ({ ...c, mode: 'Script', script: t, title: c.title || x.name.replace(/\.[^.]+$/, '') })) }) }
   const download = (data, file) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })); a.download = file; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000) }
   const exportJobs = () => run('Building jobs file…', async () => {
-    const out = buildJobs(g, cfg, name, rows); if (!out.jobs.length) throw new Error('No video is Waiting.')
-    download(out, 'frame_jobs.json')
+    if (!rows.some(r => r.status === 'Waiting')) throw new Error('No video is Waiting. Videos on Hold are not sent to the backend; release them first.')
+    let cur = rows; if (await P.prepareFolders(p, rows)) { cur = await P.loadVideos(p); setRows(cur) }   // every Waiting video needs its Input/Output folder
+    download(buildJobs(g, cfg, name, cur), 'frame_jobs.json')
   })
   const importRes = e => { const x = e.target.files[0]; e.target.value = ''; if (x) run('Reading results…', async () => { const k = await P.importResults(p, rows, JSON.parse(await x.text())); await reload(); if (!k) throw new Error('No row in that file matches this playlist.') }) }
   return <section>
     <div className="stats"><b>{rows.length}</b> videos <b>{Math.round(total * 10) / 10}</b> minutes · {waitMin[1] > 0 && <>waiting videos need about {waitMin[0] === waitMin[1] ? fmtT(waitMin[0]) : `${fmtT(waitMin[0])} to ${fmtT(waitMin[1])}`} to build · </>}{STATUSES.map(s => n(s) ? `${n(s)} ${s.toLowerCase()}` : '').filter(Boolean).join(' · ')}</div>
     {noOwn > 0 && <p className="note">{noOwn} video{noOwn > 1 ? 's have' : ' has'} no thumbnail of its own, so the default template {t.templateName ? <b>{t.templateName}</b> : <b>(none uploaded yet, a plain background is used)</b>} is used and the backend writes the title on it. <button className="link" onClick={() => gotoThumb('')}>Set the default template</button></p>}
     <div className="seg tabs">{[['Prompt', 'From a prompt'], ['Script', 'I have a script']].map(([k, l]) => <button key={k} className={nt.mode === k ? 'on' : ''} onClick={() => setNt({ ...nt, mode: k })}>{l}</button>)}</div>
+    <p className="hint">New videos start on <b>Hold</b>: the backend will not touch them until you set them to Waiting.</p>
     <p className="hint">{nt.mode === 'Prompt' ? 'Give a topic and Frame writes the script, then makes the video.' : 'Paste or upload your finished script. Frame uses it as written and only makes the video.'}</p>
     <div className="row add"><input value={nt.title} onChange={e => setNt({ ...nt, title: e.target.value })} placeholder="Video title" />
       {nt.mode === 'Prompt' && <input value={nt.topic} onChange={e => setNt({ ...nt, topic: e.target.value })} placeholder="Topic or prompt for the pipeline" />}
@@ -112,11 +120,11 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
       <div className="row"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost" onClick={() => sf.current.click()}>Upload script file</button>
         <small className="muted">{nt.script.length.toLocaleString()} characters · .txt, .md, .pdf, .docx, .doc, .rtf, .odt</small><button className="cta sm" disabled={!nt.script.trim()} onClick={add}>Add video</button></div></>}
     <SheetImport p={p} rows={rows} run={run} reload={reload} />
-    <div className="row"><button className="ghost" onClick={exportJobs}>Download jobs for backend</button>
+    <div className="row">{n('Hold') > 0 && <button className="cta sm" onClick={() => run('Releasing all Hold videos…', async () => { await P.releaseAll(p, rows); await reload() })}>Release all {n('Hold')} on Hold → Waiting</button>}<button className="ghost" onClick={exportJobs}>Download jobs for backend</button>
       <input ref={f} type="file" accept=".json,application/json" hidden onChange={importRes} /><button className="ghost" onClick={() => f.current.click()}>Import results</button>
       <a className="ghost" target="_blank" rel="noreferrer" href={`https://docs.google.com/spreadsheets/d/${p.sheetId}`}>Open sheet</a></div>
     <div className="cards one">{!rows.length && <p className="muted">No videos yet. Add the first prompt or script above, upload a sheet, or type rows straight into the Playlist sheet.</p>}
       {rows.map(r => <Row key={[r.row, r.title, r.status, r.thumbLink].join('|')} single={single} r={r} cfg={cfg} p={p} run={run} reload={reload} gotoThumb={gotoThumb} gotoEdit={gotoEdit} ask={setDel} />)}</div>
-    {del && <Confirm title={`Remove “${del.title}”?`} text="The row is deleted from the Playlist sheet. Files in Drive stay." yes="Remove" onYes={() => run('Removing…', async () => { await P.deleteVideo(p, del); setDel(null); await reload() })} onNo={() => setDel(null)} />}
+    {del && <Confirm title={`Remove “${del.title}”?`} text="The row is deleted from the Playlist sheet. The video's Drive folder (Input / Output) stays." yes="Remove" onYes={() => run('Removing…', async () => { await P.deleteVideo(p, del); setDel(null); await reload() })} onNo={() => setDel(null)} />}
   </section>
 }

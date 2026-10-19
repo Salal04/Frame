@@ -117,16 +117,23 @@ export const PROJECT_FIELDS = [
   ['allow_latex', 'Allow LaTeX (never with Urdu screen text)', 'bool', '']]
 
 // ---------------------------------------------------------------- narrator
-export const STATUSES = ['Waiting', 'In Process', 'Completed', 'Uploaded', 'Failed']   // the backend moves a video along this list
+export const STATUSES = ['Hold', 'Waiting', 'In Process', 'Completed', 'Uploaded', 'Failed']
+// Hold       = the user is not ready yet. The backend must NOT touch it. This is the default for every new video.
+// Waiting    = the user released it. The backend may pick it up now.
+// the rest   = set by the backend only. Once a video leaves Hold/Waiting the user can no longer change its status.
+export const USER_STATUSES = ['Hold', 'Waiting']
+export const isLocked = s => !USER_STATUSES.includes(s)
+export const canUserSet = (from, to) => from === to || (USER_STATUSES.includes(from) && USER_STATUSES.includes(to))
 const norm = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
 export const normStatus = s => {   // also understands the old words (Draft/Ready/Rendering/Done)
   const k = norm(s)
-  if (!k || /^(waiting|draft|ready|queued|pending)$/.test(k)) return 'Waiting'
+  if (!k || /^(hold|onhold|draft|paused|pause)$/.test(k)) return 'Hold'   // empty = Hold, so nothing is processed by accident
+  if (/^(waiting|ready|queued|pending)$/.test(k)) return 'Waiting'
   if (/process|progress|render|running/.test(k)) return 'In Process'
   if (/upload|publish/.test(k)) return 'Uploaded'
   if (/complete|done|finish/.test(k)) return 'Completed'
   if (/fail|error/.test(k)) return 'Failed'
-  return 'Waiting'
+  return 'Hold'
 }
 export const INPUT_TYPES = ['Prompt', 'Script']   // Prompt = Frame writes the script from the topic. Script = you supply the finished script.
 export const MAX_SCRIPT = 49000                    // one Google Sheets cell holds at most 50,000 characters
@@ -155,7 +162,7 @@ export const PLAYLIST_COLS = [
   ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
   ['Audience', 'audience'], ['Language', 'language'], ['Screen Language', 'screen_language'], ['Aspect', 'aspect'], ['Voice', 'voice'], ['Engine', 'engine'], ['Engine Fixed', 'engineFixed'],
   ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Extra Config (JSON)', 'extra'],
-  ['Output Link', 'output'], ['Notes', 'notes'], ['Updated', 'updated']]
+  ['Output Link', 'output'], ['Video Folder ID', 'folderId'], ['Input Folder ID', 'inputFolderId'], ['Output Folder ID', 'outputFolderId'], ['Video Folder Link', 'folderLink'], ['Notes', 'notes'], ['Updated', 'updated']]
 
 // ---------------------------------------------------------------- uploading a sheet into the Playlist sheet
 const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', scripttext: 'Script', voiceover: 'Script', inputtype: 'Input Type', type: 'Input Type', mode: 'Input Type', length: 'Minutes', duration: 'Minutes',
@@ -185,7 +192,7 @@ export function analyzeTable(head, table) {
     count: table.slice(1).filter(r => cols.some(c => (c.name === 'Video Title' || c.name === 'Topic / Prompt' || c.name === 'Script') && String(r[c.j] ?? '').trim())).length,
   }
 }
-// One array per video, aligned to `head` (the final sheet header). Status defaults to Waiting, # continues after `base`.
+// One array per video, aligned to `head` (the final sheet header). Status defaults to Hold (an uploaded file can only say Hold or Waiting), # continues after `base`.
 export function importRows(head, a, table, base, stamp) {
   const out = []
   table.slice(1).forEach(r => {
@@ -194,7 +201,7 @@ export function importRows(head, a, table, base, stamp) {
     if (!title && !topic && !script) return
     raw['Video Title'] = title || topic.slice(0, 60) || script.slice(0, 60); raw['Topic / Prompt'] = topic || (script ? '' : title)
     raw['Input Type'] = raw['Input Type'] ? normInput(raw['Input Type']) : (script ? 'Script' : 'Prompt')   // a filled Script column means "I gave the script"
-    raw['Status'] = normStatus(raw['Status']); raw['#'] = String(base + out.length + 1); raw['Updated'] = stamp
+    { const st = normStatus(raw['Status']); raw['Status'] = isLocked(st) ? 'Hold' : st }; raw['#'] = String(base + out.length + 1); raw['Updated'] = stamp
     out.push(head.map(h => raw[h] ?? ''))
   })
   return out
@@ -234,6 +241,8 @@ export function resolveJob(g, p, v, playlist) {
     quality: p.quality, retries: +p.retries, allow_latex: !!p.allow_latex,
     engine, engine_fixed: fixed, engine_fallback: !fixed && engine !== 'auto',   // fixed = never swap engines; fallback = may retry a failed scene with the other engine
     urdu_font: g.tools.urdu_font, workdir: g.tools.workdir, output_dir: `${g.tools.output_dir}/${slug(playlist)}`,
+    // this video's own Drive folder: read the input from input_folder_id, write every output file into output_folder_id
+    video_folder_id: v.folderId || '', input_folder_id: v.inputFolderId || '', output_folder_id: v.outputFolderId || '', video_folder_link: v.folderLink || '',
   }
   Object.keys(cfg).forEach(k => cfg[k] === '' && delete cfg[k])   // empty = let config.py use its own default
   return { ...cfg, ...extra }
@@ -289,7 +298,7 @@ export function makeRecord(plan, data, queue) {
   return {
     order: plan.order,
     next: queue[0] ? { playlist: queue[0].playlist, row: queue[0].row.row, title: queue[0].row.title } : null,
-    in_process: of('In Process'), completed: of('Completed', 'Uploaded'), failed: of('Failed'),
+    on_hold: of('Hold'), in_process: of('In Process'), completed: of('Completed', 'Uploaded'), failed: of('Failed'),
     queue: queue.map((q, i) => ({ position: i + 1, playlist: q.playlist, row: q.row.row, title: q.row.title, pause_after_min: q.pauseAfterMin })),
     paused_projects: plan.projects.filter(x => x.state === 'paused').map(x => x.name), summary: sum,
   }

@@ -523,11 +523,11 @@ export default function Editor({ w, run, start, onSocial }) {
     if (!saved && saveMode === 'replace' && !confirmed) return setAsk('social')
     return run('Getting the video ready for Social…', async () => {
       const s = saved || (saveMode === 'replace' ? await doReplace() : await doCopy()), p = start?.p || w.singles, r = start?.r
-      if (s.mode === 'replace') { if (r && !['Completed', 'Uploaded'].includes(r.status)) await P.saveVideo(p, { ...r, status: 'Completed' }) }
+      if (s.mode === 'replace') { if (r && !['Completed', 'Uploaded'].includes(r.status)) await P.saveVideo(p, { ...r, status: 'Completed' }, { system: true }) }
       else if (!s.row) {
         const a = look.aspect !== 'orig' ? look.aspect : Object.entries(ASP).sort((x, y) => Math.abs(x[1] - pw / ph) - Math.abs(y[1] - pw / ph))[0][0]
         await P.loadVideos(p)
-        await P.saveVideo(p, { title: title || 'Edited video', topic: title || '', inputType: 'Prompt', status: 'Completed', output: s.link, minutes: +(dur / 60).toFixed(1), aspect: a, description: r?.description || '', thumbLink: r?.thumbLink || '', thumbText: r?.thumbText || '' })
+        await P.saveVideo(p, { title: title || 'Edited video', topic: title || '', inputType: 'Prompt', status: 'Completed', output: s.link, minutes: +(dur / 60).toFixed(1), aspect: a, description: r?.description || '', thumbLink: r?.thumbLink || '', thumbText: r?.thumbText || '' }, { system: true })
         setSaved({ ...s, row: true })
       }
       onSocial?.(idOf(s.link))
