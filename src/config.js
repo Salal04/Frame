@@ -135,9 +135,19 @@ export const normStatus = s => {   // also understands the old words (Draft/Read
   if (/fail|error/.test(k)) return 'Failed'
   return 'Hold'
 }
-export const INPUT_TYPES = ['Prompt', 'Script']   // Prompt = Frame writes the script from the topic. Script = you supply the finished script.
+export const INPUT_TYPES = ['Prompt', 'Script', 'Source']   // Prompt = Frame writes the script from the topic. Script = you supply the finished script, used word for word. Source = you paste raw text (book, article, notes) and Frame adapts it.
+// What Frame may do with a Source text. 'custom' means the user's own instruction is the whole brief.
+export const SOURCE_MODES = [
+  ['polish', 'Light polish', 'Keep the book\'s own words. Only clean it for speaking: remove page numbers, footnotes and headings, fix typos, split very long sentences. Almost no change.'],
+  ['rewrite', 'Rewrite in my narrator\'s voice', 'Same facts, same order, new wording. Written to be heard, in the playlist\'s narrator style and audience level.'],
+  ['reference', 'Use as reference', 'Frame reads the text and builds its own lesson from it. It may reorder, shorten, simplify and add examples, but must not add facts the text does not support.'],
+  ['custom', 'Custom instruction only', 'Frame follows only the instruction you write below.'],
+]
+export const SOURCE_MODE_KEYS = SOURCE_MODES.map(m => m[0])
+export const normSourceMode = s => { const k = String(s ?? '').trim().toLowerCase(); return SOURCE_MODE_KEYS.includes(k) ? k : (SOURCE_MODES.find(m => m[1].toLowerCase() === k)?.[0] || 'polish') }
+export const MAX_INSTRUCTION = 2000
 export const MAX_SCRIPT = 49000                    // one Google Sheets cell holds at most 50,000 characters
-export const normInput = s => /script/i.test(String(s ?? '')) ? 'Script' : 'Prompt'
+export const normInput = s => /source|adapt|book|rewrite/i.test(String(s ?? '')) ? 'Source' : /script/i.test(String(s ?? '')) ? 'Script' : 'Prompt'
 export const STYLE_PRESETS = [
   'calm, clear and friendly, like a good teacher', 'upbeat and energetic, like a favourite YouTube explainer',
   'warm and slow, like a bedtime storyteller', 'serious and steady, like a documentary narrator',
@@ -159,13 +169,13 @@ export const ttsNote = m => /lite/.test(m) ? 'Lite: lighter, bigger free daily a
 
 // ---------------------------------------------------------------- playlist sheet (header name -> field)
 export const PLAYLIST_COLS = [
-  ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
+  ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Source Mode', 'sourceMode'], ['Custom Instruction', 'instruction'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
   ['Audience', 'audience'], ['Language', 'language'], ['Screen Language', 'screen_language'], ['Aspect', 'aspect'], ['Voice', 'voice'], ['Engine', 'engine'], ['Engine Fixed', 'engineFixed'],
   ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Custom Clips (JSON)', 'clips'], ['Extra Config (JSON)', 'extra'],
   ['Output Link', 'output'], ['Video Folder ID', 'folderId'], ['Input Folder ID', 'inputFolderId'], ['Output Folder ID', 'outputFolderId'], ['Video Folder Link', 'folderLink'], ['Notes', 'notes'], ['Updated', 'updated']]
 
 // ---------------------------------------------------------------- uploading a sheet into the Playlist sheet
-const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', scripttext: 'Script', voiceover: 'Script', inputtype: 'Input Type', type: 'Input Type', mode: 'Input Type', length: 'Minutes', duration: 'Minutes',
+const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', scripttext: 'Script', sourcetext: 'Script', booktext: 'Script', sourcemode: 'Source Mode', instruction: 'Custom Instruction', instructions: 'Custom Instruction', customprompt: 'Custom Instruction', voiceover: 'Script', inputtype: 'Input Type', type: 'Input Type', mode: 'Input Type', length: 'Minutes', duration: 'Minutes',
   desc: 'Description', videodescription: 'Description', thumbnail: 'Thumbnail Link', thumb: 'Thumbnail Link', thumbnailurl: 'Thumbnail Link', thumblink: 'Thumbnail Link',
   engine: 'Engine', renderer: 'Engine', library: 'Engine', lib: 'Engine', aspectratio: 'Aspect', ratio: 'Aspect', shape: 'Aspect', thumbtext: 'Thumbnail Text', clips: 'Custom Clips (JSON)', customclips: 'Custom Clips (JSON)', overlays: 'Custom Clips (JSON)', extra: 'Extra Config (JSON)', extraconfig: 'Extra Config (JSON)', output: 'Output Link', link: 'Output Link', no: '#', num: '#', number: '#', order: '#' }
 const CANON = Object.fromEntries(PLAYLIST_COLS.filter(c => c[0] !== '#').map(([h]) => [norm(h), h]))
@@ -200,7 +210,8 @@ export function importRows(head, a, table, base, stamp) {
     const topic = raw['Topic / Prompt'] || '', title = raw['Video Title'] || '', script = raw['Script'] || ''
     if (!title && !topic && !script) return
     raw['Video Title'] = title || topic.slice(0, 60) || script.slice(0, 60); raw['Topic / Prompt'] = topic || (script ? '' : title)
-    raw['Input Type'] = raw['Input Type'] ? normInput(raw['Input Type']) : (script ? 'Script' : 'Prompt')   // a filled Script column means "I gave the script"
+    raw['Input Type'] = raw['Input Type'] ? normInput(raw['Input Type']) : (script ? (raw['Source Mode'] ? 'Source' : 'Script') : 'Prompt')
+    if (raw['Input Type'] === 'Source') raw['Source Mode'] = normSourceMode(raw['Source Mode'])   // a filled Script column means "I gave the script"
     { const st = normStatus(raw['Status']); raw['Status'] = isLocked(st) ? 'Hold' : st }; raw['#'] = String(base + out.length + 1); raw['Updated'] = stamp
     out.push(head.map(h => raw[h] ?? ''))
   })
@@ -249,14 +260,18 @@ export function resolveJob(g, p, v, playlist) {
   const pin = p.tts_model, rest = csv(g.models.tts).filter(x => x !== pin)
   const tts = p.tts_strict && pin ? [pin] : [...(pin ? [pin] : []), ...rest]   // a pinned model keeps the voice identical across the playlist
   const dv = (v.description || '').trim(), dp = (p.description || '').trim()
-  const isScript = normInput(v.inputType) === 'Script' && (v.script || '').trim()   // a script row with no script text falls back to its prompt
+  const kind = normInput(v.inputType), hasText = !!(v.script || '').trim()
+  const isScript = kind === 'Script' && hasText   // a script row with no script text falls back to its prompt
+  const sm = normSourceMode(v.sourceMode), isSource = kind === 'Source' && (hasText || (sm === 'custom' && !!(v.instruction || '').trim()))   // custom mode may run on the instruction alone
   const thumbnail = thumbnailFor(p, v)
   const engine = normEngine(v.engine) || normEngine(p.engine) || 'auto'                       // row > project > AI chooses
   const fixed = String(v.engineFixed ?? '').trim() ? /^(1|true|yes|y|fixed)$/i.test(String(v.engineFixed).trim()) : !!p.engine_fixed
   const cfg = {
     description: [dv, dp].filter(Boolean).join('\n\n'), description_video: dv, description_project: dp, thumbnail,
-    input_type: isScript ? 'script' : 'prompt', script: isScript ? v.script.trim() : '',
-    topic: (v.topic || v.title || '').trim(), minutes: +v.minutes || (isScript ? '' : +p.minutes || 3), audience: v.audience || p.audience,
+    input_type: isSource ? 'source' : isScript ? 'script' : 'prompt', script: isScript ? v.script.trim() : '',
+    source_text: isSource ? (v.script || '').trim() : '', source_mode: isSource ? sm : '',
+    custom_instruction: (isSource || kind === 'Prompt') ? (v.instruction || '').trim() : '',
+    topic: (v.topic || v.title || '').trim(), minutes: +v.minutes || (isScript || (isSource && (sm === 'polish' || sm === 'rewrite')) ? '' : +p.minutes || 3), audience: v.audience || p.audience,
     language: v.language || p.language, screen_language: v.screen_language || p.screen_language,
     aspect: normAspect(v.aspect) || normAspect(p.aspect) || '16:9',   // row > project > built-in 16:9
     voice: v.voice || p.voice, tts_style: p.tts_style, tts_engine: p.tts_engine, cloud_voices: p.cloud_voices,

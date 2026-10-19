@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import * as P from './playlist.js'
 import * as G from './drive.js'
-import { STATUSES, isLocked, VOICES, LANGS, ASPECTS, MAX_SCRIPT, buildJobs, normAspect, aspectHint } from './config.js'
+import { STATUSES, isLocked, VOICES, LANGS, ASPECTS, MAX_SCRIPT, MAX_INSTRUCTION, SOURCE_MODES, normSourceMode, buildJobs, normAspect, aspectHint } from './config.js'
 import { Confirm } from './Classic.jsx'
 import { EnginePicker, enginePhrase } from './Engine.jsx'
 import Clips from './Clips.jsx'
@@ -12,17 +12,30 @@ const cls = s => 'st-' + (s || 'Hold').toLowerCase().replace(/\s+/g, '-')
 
 const tooLong = t => { if ((t || '').length > MAX_SCRIPT) throw new Error(`The script is ${t.length.toLocaleString()} characters. One sheet cell holds about 50,000, so split it into two videos.`) }
 
+// Source text: the middle road between "write it for me" and "use my script word for word".
+function SourceOptions({ mode, instruction, onMode, onInstruction }) {
+  const m = normSourceMode(mode), custom = m === 'custom'
+  return <div className="srcopts">
+    <div className="seg tabs">{SOURCE_MODES.map(([k, l]) => <button key={k} type="button" className={m === k ? 'on' : ''} onClick={() => onMode(k)}>{l}</button>)}</div>
+    <small className="hint">{SOURCE_MODES.find(x => x[0] === m)[2]}</small>
+    <label>{custom ? 'Your instruction (required)' : 'Extra instruction (optional)'}<textarea rows={3} maxLength={MAX_INSTRUCTION} value={instruction || ''} onChange={e => onInstruction(e.target.value)}
+      placeholder={custom ? 'e.g. Turn this chapter into a story for kids, keep every character name, end with a question.' : 'e.g. Keep the quotes exactly as written. Skip the introduction. Explain hard words in simple Urdu.'} />
+      <small className="hint">{(instruction || '').length}/{MAX_INSTRUCTION}. This is added on top of the choice above.</small></label>
+  </div>
+}
+
 function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single }) {
   const [e, setE] = useState(r), [open, setOpen] = useState(false), tf = useRef(), sf = useRef(), up = k => ev => setE({ ...e, [k]: ev.target.value })
   const save = () => run('Saving video…', async () => {
     if (e.inputType === 'Script') { if (!(e.script || '').trim()) throw new Error('This video is set to Script, but the script is empty.'); tooLong(e.script) }
-    await P.saveVideo(p, e); await reload(); setOpen(false) })
+    if (e.inputType === 'Source') { const sm = normSourceMode(e.sourceMode); if (sm === 'custom' ? !(e.instruction || '').trim() : !(e.script || '').trim()) throw new Error(sm === 'custom' ? 'Custom mode needs an instruction.' : 'This video is set to Source text, but the text is empty.'); tooLong(e.script) }
+    await P.saveVideo(p, { ...e, sourceMode: e.inputType === 'Source' ? normSourceMode(e.sourceMode) : '' }); await reload(); setOpen(false) })
   const pickScript = ev => { const x = ev.target.files[0]; ev.target.value = ''; if (x) run('Reading the script…', async () => { const t = await G.readTextFile(x); tooLong(t); setE(c => ({ ...c, script: t })) }) }
   const own = ev => { const x = ev.target.files[0]; ev.target.value = ''; if (x) run('Uploading thumbnail…', async () => { const link = await P.uploadVideoThumb(p, x, e); await P.saveVideo(p, { ...e, thumbLink: link }); await reload() }) }
   const back = (patch, msg) => run(msg, async () => { await P.saveVideo(p, { ...e, ...patch }); await reload() })
   return <div className={'card video ' + cls(r.status)}>
     <div className="vhead" onClick={() => setOpen(!open)}><span className="num">{r.order || r.row - 1}</span>
-      <div><h3>{r.title}</h3><small className="muted">{r.inputType === 'Script' ? 'own script' : 'prompt'} · {r.minutes || (r.inputType === 'Script' ? 'length from script' : cfg.minutes + ' min')}{r.minutes ? ' min' : ''} · {normAspect(r.aspect) ? r.aspect + ' (own)' : (normAspect(cfg.aspect) || '16:9') + ' (project)'} · {enginePhrase(r.engine, r.engineFixed, cfg.engine, cfg.engine_fixed)} · {r.thumbLink ? 'own thumbnail' : 'default thumbnail'} · {single ? (r.description ? 'own description' : 'no description') : (r.description ? 'own description + project description' : 'project description')}</small></div>
+      <div><h3>{r.title}</h3><small className="muted">{r.inputType === 'Script' ? 'own script' : r.inputType === 'Source' ? 'source text · ' + (SOURCE_MODES.find(m => m[0] === normSourceMode(r.sourceMode))?.[1] || '').toLowerCase() : 'prompt'} · {r.minutes || (r.inputType === 'Script' ? 'length from script' : cfg.minutes + ' min')}{r.minutes ? ' min' : ''} · {normAspect(r.aspect) ? r.aspect + ' (own)' : (normAspect(cfg.aspect) || '16:9') + ' (project)'} · {enginePhrase(r.engine, r.engineFixed, cfg.engine, cfg.engine_fixed)} · {r.thumbLink ? 'own thumbnail' : 'default thumbnail'} · {single ? (r.description ? 'own description' : 'no description') : (r.description ? 'own description + project description' : 'project description')}</small></div>
       <span className="pill">{r.status}</span></div>
     {open && <div className="vbody">
       <div className="statusbox">
@@ -33,13 +46,18 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single }) {
         {r.folderLink ? <small className="muted">Video folder: <a href={r.folderLink} target="_blank" rel="noreferrer">open</a> (Input · Output)</small> : <small className="muted">The video folder (Input / Output) is created when you save it.</small>}
       </div>
       <label>Title<input value={e.title} onChange={up('title')} /></label>
-      <label>This video is made from<select value={e.inputType} onChange={up('inputType')}><option value="Prompt">A prompt (Frame writes the script)</option><option value="Script">My own script (Frame uses it as written)</option></select></label>
-      {e.inputType === 'Script'
+      <label>This video is made from<select value={e.inputType} onChange={up('inputType')}><option value="Prompt">A prompt (Frame writes the script)</option><option value="Source">Text I pasted, e.g. from a book (Frame adapts it)</option><option value="Script">My own script (Frame uses it as written)</option></select></label>
+      {e.inputType === 'Source' ? <>
+          <label>Source text<textarea rows={9} value={e.script} onChange={up('script')} placeholder="Paste the text here, straight from the book or article, or upload a file below." /><small className="hint">{(e.script || '').length.toLocaleString()} characters.</small></label>
+          <div className="row tight"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost sm" onClick={() => sf.current.click()}>Upload text file</button></div>
+          <SourceOptions mode={e.sourceMode} instruction={e.instruction} onMode={k => setE({ ...e, sourceMode: k })} onInstruction={v => setE({ ...e, instruction: v })} /></>
+      : e.inputType === 'Script'
         ? <><label>Script<textarea rows={9} value={e.script} onChange={up('script')} placeholder="Paste the full script here, or upload a file below." /><small className="hint">{(e.script || '').length.toLocaleString()} characters. Used word for word as the narration.</small></label>
           <div className="row tight"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost sm" onClick={() => sf.current.click()}>Upload script file</button><small className="muted">.txt, .md, .pdf, .docx, .doc, .rtf, .odt. It replaces the text above.</small></div></>
         : <label>Topic / prompt<textarea rows={3} value={e.topic} onChange={up('topic')} /><small className="hint">This is exactly what the pipeline receives as the topic.</small></label>}
+      {e.inputType === 'Prompt' && <label>Extra instruction (optional)<textarea rows={2} maxLength={MAX_INSTRUCTION} value={e.instruction || ''} onChange={up('instruction')} placeholder="e.g. Start with a story, no maths formulas." /></label>}
       <label>Description<textarea rows={3} value={e.description} onChange={up('description')} placeholder={single ? 'Optional. Singles have no shared description, so only this one is used.' : "Optional. Written first; the project's default description is added after it."} /></label>
-      <div className="cols"><label>Minutes<input type="number" min="0.5" step="0.5" value={e.minutes} placeholder={e.inputType === 'Script' ? 'from script' : cfg.minutes} onChange={up('minutes')} /></label>
+      <div className="cols"><label>Minutes<input type="number" min="0.5" step="0.5" value={e.minutes} placeholder={e.inputType === 'Script' || (e.inputType === 'Source' && ['polish', 'rewrite'].includes(normSourceMode(e.sourceMode))) ? 'from text' : cfg.minutes} onChange={up('minutes')} /></label>
         <label>Audience<input value={e.audience} placeholder={cfg.audience} onChange={up('audience')} /></label>
         <label>Narration language<select value={e.language} onChange={up('language')}>{[...inherit(), ...LANGS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <label>Screen language<select value={e.screen_language} onChange={up('screen_language')}>{[...inherit(), ...LANGS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
@@ -81,7 +99,7 @@ function SheetImport({ p, rows, run, reload }) {
   </div>
 }
 
-const BLANK = { mode: 'Prompt', title: '', topic: '', script: '', minutes: '' }
+const BLANK = { mode: 'Prompt', title: '', topic: '', script: '', minutes: '', sourceMode: 'polish', instruction: '' }
 
 export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb, gotoEdit, single }) {
   const [nt, setNt] = useState(BLANK), [del, setDel] = useState(null), f = useRef(), sf = useRef()
@@ -91,16 +109,18 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
   const waitMin = rows.filter(r => r.status === 'Waiting').reduce((a, r) => { const e = estimateRender({ minutes: +r.minutes || +cfg.minutes || 3, scene_sec: cfg.scene_sec, quality: cfg.quality, max_scenes: cfg.max_scenes, engine: normEngine(r.engine) || normEngine(cfg.engine) || 'auto' }); return [a[0] + e.sec[0] / 60, a[1] + e.sec[1] / 60] }, [0, 0])
   const fmtT = m => m >= 90 ? `${Math.round(m / 6) / 10} h` : `${Math.round(m)} min`
   const add = () => {
-    const ti = nt.title.trim(), tp = nt.topic.trim(), sc = nt.script.trim(), isScript = nt.mode === 'Script'
-    if (isScript ? !sc : (!ti && !tp)) return
+    const ti = nt.title.trim(), tp = nt.topic.trim(), sc = nt.script.trim(), isScript = nt.mode === 'Script', isSource = nt.mode === 'Source', ins = nt.instruction.trim()
+    if (isSource ? (nt.sourceMode === 'custom' ? !ins : !sc) : isScript ? !sc : (!ti && !tp)) return
     run(single ? 'Adding the video…' : 'Adding to the playlist…', async () => {
-      if (isScript) tooLong(sc)
-      await P.saveVideo(p, isScript
+      if (isScript || isSource) tooLong(sc)
+      await P.saveVideo(p, isSource
+        ? { order: rows.length + 1, title: ti || sc.slice(0, 60) || ins.slice(0, 60), topic: '', inputType: 'Source', script: sc, sourceMode: nt.sourceMode, instruction: ins, minutes: nt.minutes, status: 'Hold' }
+        : isScript
         ? { order: rows.length + 1, title: ti || sc.slice(0, 60), topic: '', inputType: 'Script', script: sc, minutes: nt.minutes, status: 'Hold' }
-        : { order: rows.length + 1, title: ti || tp.slice(0, 60), topic: tp || ti, inputType: 'Prompt', script: '', minutes: nt.minutes || cfg.minutes, status: 'Hold' })
+        : { order: rows.length + 1, title: ti || tp.slice(0, 60), topic: tp || ti, inputType: 'Prompt', script: '', instruction: ins, minutes: nt.minutes || cfg.minutes, status: 'Hold' })
       setNt({ ...BLANK, mode: nt.mode }); await reload() })
   }
-  const pickScript = ev => { const x = ev.target.files[0]; ev.target.value = ''; if (x) run('Reading the script…', async () => { const t = await G.readTextFile(x); tooLong(t); setNt(c => ({ ...c, mode: 'Script', script: t, title: c.title || x.name.replace(/\.[^.]+$/, '') })) }) }
+  const pickScript = ev => { const x = ev.target.files[0]; ev.target.value = ''; if (x) run('Reading the script…', async () => { const t = await G.readTextFile(x); tooLong(t); setNt(c => ({ ...c, mode: c.mode === 'Source' ? 'Source' : 'Script', script: t, title: c.title || x.name.replace(/\.[^.]+$/, '') })) }) }
   const download = (data, file) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })); a.download = file; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000) }
   const exportJobs = () => run('Building jobs file…', async () => {
     if (!rows.some(r => r.status === 'Waiting')) throw new Error('No video is Waiting. Videos on Hold are not sent to the backend; release them first.')
@@ -111,13 +131,18 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
   return <section>
     <div className="stats"><b>{rows.length}</b> videos <b>{Math.round(total * 10) / 10}</b> minutes · {waitMin[1] > 0 && <>waiting videos need about {waitMin[0] === waitMin[1] ? fmtT(waitMin[0]) : `${fmtT(waitMin[0])} to ${fmtT(waitMin[1])}`} to build · </>}{STATUSES.map(s => n(s) ? `${n(s)} ${s.toLowerCase()}` : '').filter(Boolean).join(' · ')}</div>
     {noOwn > 0 && <p className="note">{noOwn} video{noOwn > 1 ? 's have' : ' has'} no thumbnail of its own, so the default template {t.templateName ? <b>{t.templateName}</b> : <b>(none uploaded yet, a plain background is used)</b>} is used and the backend writes the title on it. <button className="link" onClick={() => gotoThumb('')}>Set the default template</button></p>}
-    <div className="seg tabs">{[['Prompt', 'From a prompt'], ['Script', 'I have a script']].map(([k, l]) => <button key={k} className={nt.mode === k ? 'on' : ''} onClick={() => setNt({ ...nt, mode: k })}>{l}</button>)}</div>
+    <div className="seg tabs">{[['Prompt', 'From a prompt'], ['Source', 'I have text (book, notes)'], ['Script', 'I have a finished script']].map(([k, l]) => <button key={k} className={nt.mode === k ? 'on' : ''} onClick={() => setNt({ ...nt, mode: k })}>{l}</button>)}</div>
     <p className="hint">New videos start on <b>Hold</b>: the backend will not touch them until you set them to Waiting.</p>
-    <p className="hint">{nt.mode === 'Prompt' ? 'Give a topic and Frame writes the script, then makes the video.' : 'Paste or upload your finished script. Frame uses it as written and only makes the video.'}</p>
+    <p className="hint">{nt.mode === 'Prompt' ? 'Give a topic and Frame writes the script, then makes the video.' : nt.mode === 'Source' ? 'Paste text as it is, for example from a book. You choose how much Frame may change it.' : 'Paste or upload your finished script. Frame uses it as written and only makes the video.'}</p>
     <div className="row add"><input value={nt.title} onChange={e => setNt({ ...nt, title: e.target.value })} placeholder="Video title" />
       {nt.mode === 'Prompt' && <input value={nt.topic} onChange={e => setNt({ ...nt, topic: e.target.value })} placeholder="Topic or prompt for the pipeline" />}
       <input className="mini" type="number" min="0.5" step="0.5" value={nt.minutes} onChange={e => setNt({ ...nt, minutes: e.target.value })} placeholder={nt.mode === 'Script' ? 'auto' : `${cfg.minutes} min`} />
       {nt.mode === 'Prompt' && <button className="cta sm" onClick={add}>Add video</button>}</div>
+    {nt.mode === 'Prompt' && <input value={nt.instruction} maxLength={MAX_INSTRUCTION} onChange={e => setNt({ ...nt, instruction: e.target.value })} placeholder="Extra instruction (optional), e.g. start with a story" />}
+    {nt.mode === 'Source' && <><textarea rows={7} value={nt.script} onChange={e => setNt({ ...nt, script: e.target.value })} placeholder="Paste the text here, straight from the book or article, or upload a file." />
+      <SourceOptions mode={nt.sourceMode} instruction={nt.instruction} onMode={k => setNt({ ...nt, sourceMode: k })} onInstruction={v => setNt({ ...nt, instruction: v })} />
+      <div className="row"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost" onClick={() => sf.current.click()}>Upload text file</button>
+        <small className="muted">{nt.script.length.toLocaleString()} characters</small><button className="cta sm" disabled={nt.sourceMode === 'custom' ? !nt.instruction.trim() : !nt.script.trim()} onClick={add}>Add video</button></div></>}
     {nt.mode === 'Script' && <><textarea rows={7} value={nt.script} onChange={e => setNt({ ...nt, script: e.target.value })} placeholder="Paste the full script here, or upload a file." />
       <div className="row"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost" onClick={() => sf.current.click()}>Upload script file</button>
         <small className="muted">{nt.script.length.toLocaleString()} characters · .txt, .md, .pdf, .docx, .doc, .rtf, .odt</small><button className="cta sm" disabled={!nt.script.trim()} onClick={add}>Add video</button></div></>}

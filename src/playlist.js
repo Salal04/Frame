@@ -76,7 +76,7 @@ export async function loadVideos(p) {
   return v.slice(1).map((r, i) => {
     const raw = Object.fromEntries(head.map((h, j) => [h, r[j] ?? '']))
     const o = { row: i + 2, raw }; PLAYLIST_COLS.forEach(([h, k]) => { o[k] = raw[h] ?? '' }); o.status = normStatus(o.status)
-    o.inputType = o.inputType ? normInput(o.inputType) : (o.script ? 'Script' : 'Prompt'); return o
+    o.inputType = o.inputType ? normInput(o.inputType) : (o.script ? (o.sourceMode ? 'Source' : 'Script') : 'Prompt'); return o
   }).filter(o => o.title || o.topic || o.script)
 }
 
@@ -100,10 +100,11 @@ async function putText(parent, name, text, type = 'text/plain') {
 }
 // the input side of the folder: a plain snapshot of what the user typed, so the folder is self-contained
 async function writeInput(o) {
-  const isScript = o.inputType === 'Script'
-  const input = { title: o.title, input_type: isScript ? 'script' : 'prompt', topic: o.topic || '', script: isScript ? o.script || '' : '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', custom_clips: clipsFor(o), extra: o.extra || '', saved: now() }
+  const isScript = o.inputType === 'Script', isSource = o.inputType === 'Source'
+  const input = { title: o.title, input_type: isSource ? 'source' : isScript ? 'script' : 'prompt', topic: o.topic || '', script: isScript ? o.script || '' : '', source_text: isSource ? o.script || '' : '', source_mode: isSource ? o.sourceMode || 'polish' : '', custom_instruction: o.instruction || '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', custom_clips: clipsFor(o), extra: o.extra || '', saved: now() }
   await putText(o.inputFolderId, 'input.json', JSON.stringify(input, null, 2), 'application/json')
   if (isScript) await putText(o.inputFolderId, 'script.txt', o.script || '')
+  else if (isSource) await putText(o.inputFolderId, 'source.txt', o.script || '')
   else await putText(o.inputFolderId, 'prompt.txt', o.topic || o.title || '')
   if ((o.description || '').trim()) await putText(o.inputFolderId, 'description.txt', o.description)
 }
