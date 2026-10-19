@@ -5,6 +5,7 @@ import { previewVoice } from './tts.js'
 import Robot from './Robot.jsx'
 import { connectBackend } from './drive.js'
 import { EnginePicker } from './Engine.jsx'
+import Blocks from './Blocks.jsx'
 
 // ---------- one generic input: [path, label, type, hint, options] ----------
 function Field({ d, value, onChange }) {
@@ -19,21 +20,31 @@ function Field({ d, value, onChange }) {
 }
 
 // ---------- playlist defaults (project_config.json) ----------
+// Small blocks: open one, change it, "Save & next" saves the whole settings file and opens the next block.
+const PS_GROUPS = [
+  ['lang', 'Language and audience', ['language', 'screen_language', 'audience', 'description']],
+  ['shape', 'Shape and length', ['aspect', 'minutes', 'scene_sec', 'chapter_min', 'max_scenes']],
+  ['quality', 'Quality and repairs', ['quality', 'retries', 'min_steps_per_sentence', 'allow_latex']]]
 export function ProjectSettings({ cfg, save, run, single }) {
-  const [d, setD] = useState(cfg), [ok, setOk] = useState(false)
+  const [d, setD] = useState(cfg), put = (k, v) => setD(x => ({ ...x, [k]: v }))
+  const field = k => { const f = PROJECT_FIELDS.find(x => x[0] === k); return !f || (single && k === 'description') ? null : <Field key={k} d={f} value={d[k]} onChange={v => put(k, v)} /> }
+  const saveAll = () => run('Saving playlist settings…', async () => { await save(single ? { ...d, description: '' } : d); return true })
+  const items = [
+    PS_GROUPS[0], PS_GROUPS[1],
+    ['engine', 'Video engine'], PS_GROUPS[2]].map(([id, title, keys]) => id === 'engine'
+    ? { id, title, note: d.engine || 'auto', body: <EnginePicker engine={d.engine} fixed={d.engine_fixed} est={{ minutes: d.minutes, scene_sec: d.scene_sec, quality: d.quality, max_scenes: d.max_scenes, engine: d.engine }}
+        onEngine={v => put('engine', v)} onFixed={v => put('engine_fixed', v)} /> }
+    : { id, title, body: <div className="cols">{keys.map(field)}</div> })
   return <section><p className="muted">Starting point for every video in {single ? 'Singles' : 'this playlist'}. A video row can override the main ones.{single && ' Singles have no shared description.'}</p>
-    <EnginePicker engine={d.engine} fixed={d.engine_fixed} est={{ minutes: d.minutes, scene_sec: d.scene_sec, quality: d.quality, max_scenes: d.max_scenes, engine: d.engine }}
-      onEngine={v => { setD({ ...d, engine: v }); setOk(false) }} onFixed={v => { setD({ ...d, engine_fixed: v }); setOk(false) }} />
-    <div className="cols">{PROJECT_FIELDS.filter(f => !(single && f[0] === 'description') && !['engine', 'engine_fixed'].includes(f[0])).map(f => <Field key={f[0]} d={f} value={d[f[0]]} onChange={v => { setD({ ...d, [f[0]]: v }); setOk(false) }} />)}</div>
-    <button className="cta sm" onClick={() => run('Saving playlist settings…', async () => { await save(single ? { ...d, description: '' } : d); setOk(true) })}>Save settings</button>
-    {ok && <p className="ok">Saved to project_config.json</p>}</section>
+    <Blocks items={items} save={saveAll} stamp={d} />
+    <p className="hint">Each block saves the whole settings file (project_config.json), so “Save &amp; next” keeps everything you changed so far.</p></section>
 }
 
 // ---------- narrator: one voice + one tone + one TTS model for the whole playlist ----------
 export function Narrator({ cfg, save, g, run }) {
   const keep = ['voice', 'tts_style', 'tts_engine', 'tts_model', 'tts_strict', 'cloud_voices']
-  const [n, setN] = useState(() => Object.fromEntries(keep.map(k => [k, cfg[k]]))), [q, setQ] = useState(''), [url, setUrl] = useState(''), [now, setNow] = useState(''), [ok, setOk] = useState(false)
-  const au = useRef(), set = k => v => { setN({ ...n, [k]: v }); setOk(false) }
+  const [n, setN] = useState(() => Object.fromEntries(keep.map(k => [k, cfg[k]]))), [q, setQ] = useState(''), [url, setUrl] = useState(''), [now, setNow] = useState('')
+  const au = useRef(), set = k => v => setN(x => ({ ...x, [k]: v }))
   const key = csv(g.keys.tts)[0] || csv(g.keys.gemini)[0], models = [...new Set([n.tts_model, ...csv(g.models.tts)].filter(Boolean))]
   const hear = voice => run(`${voice} is warming up…`, async () => {
     if (!key) throw new Error('Add a Gemini key in the Control room first.')
@@ -42,28 +53,32 @@ export function Narrator({ cfg, save, g, run }) {
   })
   useEffect(() => { if (url && au.current) au.current.play().catch(() => {}) }, [url])
   const list = VOICES.filter(v => v.join(' ').toLowerCase().includes(q.toLowerCase()))
+  const saveAll = () => run('Saving narrator…', async () => { await save({ ...cfg, ...n }); return true })
+  const items = [
+    { id: 'tone', title: 'Tone of delivery', note: n.tts_style, body: <>
+      <label>Tone of delivery<input value={n.tts_style} onChange={e => set('tts_style')(e.target.value)} /></label>
+      <div className="chips">{STYLE_PRESETS.map(s => <button key={s} className={'chip' + (n.tts_style === s ? ' on' : '')} onClick={() => set('tts_style')(s)}>{s}</button>)}</div></> },
+    { id: 'voice', title: 'Voice', note: n.voice, body: <>
+      <input placeholder="Search voices by name or tone, e.g. warm" value={q} onChange={e => setQ(e.target.value)} />
+      <div className="voices">{list.map(([name, tone, feel]) => <div key={name} className={'voice' + (n.voice === name ? ' on' : '')}>
+        <b>{name}</b><span className="tone">{tone}</span><small>{feel}</small>
+        <div className="row tight"><button className="ghost sm" onClick={() => hear(name)}>{now === name ? 'Playing…' : 'Hear'}</button><button className={n.voice === name ? 'cta sm' : 'ghost sm'} onClick={() => set('voice')(name)}>{n.voice === name ? 'Chosen' : 'Choose'}</button></div></div>)}
+        {!list.length && <p className="muted">No voice matches that.</p>}</div></> },
+    { id: 'model', title: 'Speech model', note: n.tts_model || 'automatic', body: <>
+      <p className="muted">The same voice name sounds slightly different on each model. Pin one so the whole playlist matches.</p>
+      <div className="models">
+        <label className={'model' + (!n.tts_model ? ' on' : '')}><input type="radio" name="m" checked={!n.tts_model} onChange={() => set('tts_model')('')} /><b>Automatic</b><small>First model in your list that has quota left</small></label>
+        {csv(g.models.tts).map(m => <label key={m} className={'model' + (n.tts_model === m ? ' on' : '')}><input type="radio" name="m" checked={n.tts_model === m} onChange={() => set('tts_model')(m)} /><b>{m}</b><small>{ttsNote(m)}</small></label>)}</div>
+      <label className="chk"><input type="checkbox" checked={!!n.tts_strict} onChange={e => set('tts_strict')(e.target.checked)} />Never fall back to another model (voice stays identical, but a run stops when this model is out of quota)</label></> },
+    { id: 'engine', title: 'Speech engine', note: n.tts_engine, body: <>
+      <div className="cols"><label>Speech engine<select value={n.tts_engine} onChange={e => set('tts_engine')(e.target.value)}>{[['auto', 'Auto: Gemini, then Cloud TTS'], ['gemini', 'Gemini only'], ['cloud', 'Cloud TTS only']].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+        <label>Cloud TTS voices<input value={n.cloud_voices} placeholder="Empty = default for the language" onChange={e => set('cloud_voices')(e.target.value)} /></label></div></> }]
   return <section>
     <div className="narr-head"><Robot mood={now ? 'talk' : 'idle'} size={84} /><div><h3>Narrator for this playlist</h3>
       <p className="muted">Pick once and every video sounds the same. Press Hear to test it with your own key.</p></div></div>
     <audio ref={au} src={url} onEnded={() => setNow('')} hidden />
-    <label>Tone of delivery<input value={n.tts_style} onChange={e => set('tts_style')(e.target.value)} /></label>
-    <div className="chips">{STYLE_PRESETS.map(s => <button key={s} className={'chip' + (n.tts_style === s ? ' on' : '')} onClick={() => set('tts_style')(s)}>{s}</button>)}</div>
-    <h3>Voice: <span className="pick">{n.voice}</span></h3>
-    <input placeholder="Search voices by name or tone, e.g. warm" value={q} onChange={e => setQ(e.target.value)} />
-    <div className="voices">{list.map(([name, tone, feel]) => <div key={name} className={'voice' + (n.voice === name ? ' on' : '')}>
-      <b>{name}</b><span className="tone">{tone}</span><small>{feel}</small>
-      <div className="row tight"><button className="ghost sm" onClick={() => hear(name)}>{now === name ? 'Playing…' : 'Hear'}</button><button className={n.voice === name ? 'cta sm' : 'ghost sm'} onClick={() => set('voice')(name)}>{n.voice === name ? 'Chosen' : 'Choose'}</button></div></div>)}
-      {!list.length && <p className="muted">No voice matches that.</p>}</div>
-    <h3>Speech model</h3>
-    <p className="muted">The same voice name sounds slightly different on each model. Pin one so the whole playlist matches.</p>
-    <div className="models">
-      <label className={'model' + (!n.tts_model ? ' on' : '')}><input type="radio" name="m" checked={!n.tts_model} onChange={() => set('tts_model')('')} /><b>Automatic</b><small>First model in your list that has quota left</small></label>
-      {csv(g.models.tts).map(m => <label key={m} className={'model' + (n.tts_model === m ? ' on' : '')}><input type="radio" name="m" checked={n.tts_model === m} onChange={() => set('tts_model')(m)} /><b>{m}</b><small>{ttsNote(m)}</small></label>)}</div>
-    <label className="chk"><input type="checkbox" checked={!!n.tts_strict} onChange={e => set('tts_strict')(e.target.checked)} />Never fall back to another model (voice stays identical, but a run stops when this model is out of quota)</label>
-    <div className="cols"><label>Speech engine<select value={n.tts_engine} onChange={e => set('tts_engine')(e.target.value)}>{[['auto', 'Auto: Gemini, then Cloud TTS'], ['gemini', 'Gemini only'], ['cloud', 'Cloud TTS only']].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
-      <label>Cloud TTS voices<input value={n.cloud_voices} placeholder="Empty = default for the language" onChange={e => set('cloud_voices')(e.target.value)} /></label></div>
-    <button className="cta sm" onClick={() => run('Saving narrator…', async () => { await save({ ...cfg, ...n }); setOk(true) })}>Save narrator</button>
-    {ok && <p className="ok">Narrator saved. New videos use it.</p>}</section>
+    <Blocks items={items} save={saveAll} stamp={n} />
+    <p className="hint">Each block saves the whole narrator, so “Save &amp; next” keeps everything you changed so far. New videos use it.</p></section>
 }
 
 // ---------- thumbnails ----------
@@ -108,21 +123,28 @@ export function ThumbStudio({ p, cfg, save, rows, setRows, run, focus }) {
     await P.saveVideo(p, { ...row, thumbText: txt, thumbLink: link }); setRows(await P.loadVideos(p))
   })
   const slider = (k, label, min, max) => <label>{label}: {th[k]}<input type="range" min={min} max={max} value={th[k]} onChange={e => set(k)(+e.target.value)} /></label>
+  const saveStyle = () => run('Saving style…', async () => { await save({ ...cfg, thumb: th }); return true })
+  const items = [
+    { id: 'pick', title: 'Video and text', note: 'saved with the button under the picture', noSave: true, body: <>
+      <label>Video<select value={sel} onChange={e => pickRow(e.target.value)}>{!rows.length && <option value="">Add a video first</option>}{rows.map(r => <option key={r.row} value={r.row}>{r.order || r.row}. {r.title}</option>)}</select></label>
+      <label>Text on thumbnail<input value={txt} onChange={e => setTxt(e.target.value)} placeholder="Empty = video title" /></label>
+      <small className="hint">Press “Save to Drive and sheet” under the picture to keep this video's thumbnail.</small></> },
+    { id: 'template', title: 'Default template', note: th.templateName || 'none yet', noSave: true, body: <>
+      <div className="row"><input ref={f} type="file" accept="image/*" hidden onChange={upload} /><button className="ghost" onClick={() => f.current.click()}>{th.templateId ? 'Change default template' : 'Upload default template'}</button><small className="muted">{th.templateName || 'No template yet: a clay gradient is used'}</small></div>
+      <p className="hint">The default template belongs to the whole project. Every video without a thumbnail of its own uses it, and the backend writes that video's title on it with the style in the next blocks. Saved: {th.templateLink ? 'link ready for the backend' : 'upload one to get the link'}.</p></> },
+    { id: 'text', title: 'Text size and position', body: <>
+      <label>Font<select value={th.font} onChange={e => set('font')(e.target.value)}>{FONTS.map(x => <option key={x}>{x}</option>)}</select></label>
+      {slider('size', 'Text size', 40, 220)}{slider('x', 'Horizontal position (%)', 0, 100)}{slider('y', 'Vertical position (%)', 5, 95)}{slider('maxWidth', 'Line width (%)', 20, 95)}</> },
+    { id: 'colour', title: 'Colours and fade', body: <>
+      <div className="row"><label>Text colour<input type="color" value={th.color} onChange={e => set('color')(e.target.value)} /></label><label>Outline<input type="color" value={th.stroke} onChange={e => set('stroke')(e.target.value)} /></label>
+        <label>Align<select value={th.align} onChange={e => set('align')(e.target.value)}>{['left', 'center', 'right'].map(x => <option key={x}>{x}</option>)}</select></label></div>
+      <label className="chk"><input type="checkbox" checked={th.shade} onChange={e => set('shade')(e.target.checked)} />Dark fade behind the text</label>
+      <small className="hint">Saved as this playlist's thumbnail style.</small></> }]
   return <section className="thumb">
     <div><canvas ref={cv} className="canvas" aria-label="Thumbnail preview" />
       <div className="row"><button className="cta sm" onClick={toDrive}>Save to Drive and sheet</button>
         <button className="ghost" onClick={() => { const a = document.createElement('a'); a.href = cv.current.toDataURL('image/png'); a.download = `${slug(text)}.png`; a.click() }}>Download PNG</button></div></div>
-    <div>
-      <label>Video<select value={sel} onChange={e => pickRow(e.target.value)}>{!rows.length && <option value="">Add a video first</option>}{rows.map(r => <option key={r.row} value={r.row}>{r.order || r.row}. {r.title}</option>)}</select></label>
-      <label>Text on thumbnail<input value={txt} onChange={e => setTxt(e.target.value)} placeholder="Empty = video title" /></label>
-      <div className="row"><input ref={f} type="file" accept="image/*" hidden onChange={upload} /><button className="ghost" onClick={() => f.current.click()}>{th.templateId ? 'Change default template' : 'Upload default template'}</button><small className="muted">{th.templateName || 'No template yet: a clay gradient is used'}</small></div>
-      <p className="hint">The default template belongs to the whole project. Every video without a thumbnail of its own uses it, and the backend writes that video's title on it with the style below. Saved: {th.templateLink ? 'link ready for the backend' : 'upload one to get the link'}.</p>
-      <label>Font<select value={th.font} onChange={e => set('font')(e.target.value)}>{FONTS.map(x => <option key={x}>{x}</option>)}</select></label>
-      {slider('size', 'Text size', 40, 220)}{slider('x', 'Horizontal position (%)', 0, 100)}{slider('y', 'Vertical position (%)', 5, 95)}{slider('maxWidth', 'Line width (%)', 20, 95)}
-      <div className="row"><label>Text colour<input type="color" value={th.color} onChange={e => set('color')(e.target.value)} /></label><label>Outline<input type="color" value={th.stroke} onChange={e => set('stroke')(e.target.value)} /></label>
-        <label>Align<select value={th.align} onChange={e => set('align')(e.target.value)}>{['left', 'center', 'right'].map(x => <option key={x}>{x}</option>)}</select></label></div>
-      <label className="chk"><input type="checkbox" checked={th.shade} onChange={e => set('shade')(e.target.checked)} />Dark fade behind the text</label>
-      <button className="ghost" onClick={() => run('Saving style…', () => save({ ...cfg, thumb: th }))}>Save as this playlist’s style</button></div></section>
+    <div><Blocks items={items} save={saveStyle} stamp={th} /></div></section>
 }
 
 // ---------- Backend link: one refresh token for the GitHub secret ----------
@@ -147,14 +169,16 @@ export function ControlRoom({ g, run }) {
   const put = (p, v) => { setD(setPath(d, p, v)); setOk(false) }
   const out = () => { let o = structuredClone(d); LIST_PATHS.forEach(p => { o = setPath(o, p, csv(getPath(o, p))) }); return o }
   const list = p => <label key={p}>{LIST_INFO[p][0]}<textarea rows={p.startsWith('keys') ? 3 : 5} className={p.startsWith('keys') && !show ? 'secret' : ''} spellCheck="false" value={getPath(d, p)} onChange={e => put(p, e.target.value)} /><small className="hint">{LIST_INFO[p][1]}</small></label>
+  const saveAll = () => run('Saving config to Drive…', async () => { await P.saveGlobal(g, out()); setOk(true); return true })
+  const items = [
+    { id: 'keys', title: 'Keys', note: 'API keys', body: <>{['keys.gemini', 'keys.tts', 'keys.cloudTts'].map(list)}
+      <label className="chk"><input type="checkbox" checked={show} onChange={e => setShow(e.target.checked)} />Show keys</label></> },
+    { id: 'models', title: 'Models', body: <><div className="cols">{LIST_PATHS.filter(p => p.startsWith('models')).map(list)}</div>
+      <button className="ghost" onClick={() => { let n = d; LIST_PATHS.filter(p => p.startsWith('models')).forEach(p => { n = setPath(n, p, getPath(GLOBAL_DEFAULTS, p).join('\n')) }); setD(n); setOk(false) }}>Reset model lists to defaults</button></> },
+    ...GLOBAL_FIELDS.map(([title, fs]) => ({ id: 'g-' + title, title, body: <div className="cols">{fs.map(f => <Field key={f[0]} d={f} value={getPath(d, f[0])} onChange={v => put(f[0], v)} />)}</div> }))]
   return <main className="page"><h2>Control room</h2>
     <p className="muted">These settings apply to every playlist. They live in <b>Frame AI / Application Config / frame_config.json</b> in your own Drive. The folder is private; do not share it, because it holds your API keys.</p>
     <BackendLink run={run} />
-    <h3>Keys</h3>{['keys.gemini', 'keys.tts', 'keys.cloudTts'].map(list)}
-    <label className="chk"><input type="checkbox" checked={show} onChange={e => setShow(e.target.checked)} />Show keys</label>
-    <h3>Models</h3><div className="cols">{LIST_PATHS.filter(p => p.startsWith('models')).map(list)}</div>
-    <button className="ghost" onClick={() => { let n = d; LIST_PATHS.filter(p => p.startsWith('models')).forEach(p => { n = setPath(n, p, getPath(GLOBAL_DEFAULTS, p).join('\n')) }); setD(n); setOk(false) }}>Reset model lists to defaults</button>
-    {GLOBAL_FIELDS.map(([title, fs]) => <div key={title}><h3>{title}</h3><div className="cols">{fs.map(f => <Field key={f[0]} d={f} value={getPath(d, f[0])} onChange={v => put(f[0], v)} />)}</div></div>)}
-    <div className="row"><button className="cta sm" onClick={() => run('Saving config to Drive…', async () => { await P.saveGlobal(g, out()); setOk(true) })}>Save config</button></div>
-    {ok && <p className="ok">Saved to frame_config.json</p>}</main>
+    <Blocks items={items} save={saveAll} stamp={d} />
+    <p className="hint">Each block saves the whole config file, so “Save &amp; next” keeps everything you changed so far.</p></main>
 }

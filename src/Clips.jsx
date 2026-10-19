@@ -1,11 +1,11 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import * as P from './playlist.js'
 import { CLIP_POSITIONS, CLIP_ACCEPT, MAX_CLIPS, parseClips, stringifyClips, cleanClip } from './config.js'
 
 // Custom clips of ONE video: the user's own images / video clips to overlay. Video level only (nothing here touches project or app config).
 // Upload saves the file + the list straight away; editing a field is saved with "Save video". Locked videos (backend has them) are read-only.
 export default function Clips({ e, setE, p, run, reload, locked }) {
-  const f = useRef(), clips = parseClips(e.clips)
+  const f = useRef(), clips = parseClips(e.clips), [cur, setCur] = useState(-1)   // one clip open at a time; the rest show only a one-line summary
   const set = list => setE(c => ({ ...c, clips: stringifyClips(list) }))
   const patch = (i, k, v) => set(clips.map((c, j) => (j === i ? cleanClip({ ...c, [k]: v }) : c)))
   const move = (i, d) => { const l = [...clips], j = i + d; if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; set(l) }
@@ -28,10 +28,11 @@ export default function Clips({ e, setE, p, run, reload, locked }) {
     <small className="hint">Your own images or video clips that the backend overlays on <b>this video only</b>. They are not shared with the project or other videos.</small>
     {!clips.length && <p className="muted">No custom clips yet.</p>}
     {clips.map((c, i) => <div className="clip" key={c.id}>
-      <div className="clip-h"><b>{i + 1}. {c.name || 'clip'}</b> <span className="pill">{c.kind}</span>
+      <div className="clip-h"><button type="button" className="clip-toggle" aria-expanded={cur === i} onClick={() => setCur(cur === i ? -1 : i)}>
+          <b>{i + 1}. {c.name || 'clip'}</b> <span className="pill">{c.kind}</span><small className="muted">{c.start}s for {c.duration}s · {c.position}</small><span className="blk-arrow" aria-hidden="true">▾</span></button>
         {c.url && <a href={c.url} target="_blank" rel="noreferrer">open</a>}
-        {!locked && <span className="clip-btns"><button className="ghost sm" onClick={() => move(i, -1)} disabled={i === 0}>↑</button><button className="ghost sm" onClick={() => move(i, 1)} disabled={i === clips.length - 1}>↓</button><button className="ghost sm danger" onClick={() => set(clips.filter((_, j) => j !== i))}>Remove</button></span>}</div>
-      <fieldset disabled={locked} className="cols">
+        {!locked && <span className="clip-btns"><button className="ghost sm" onClick={() => move(i, -1)} disabled={i === 0}>↑</button><button className="ghost sm" onClick={() => move(i, 1)} disabled={i === clips.length - 1}>↓</button><button className="ghost sm danger" onClick={() => { set(clips.filter((_, j) => j !== i)); setCur(-1) }}>Remove</button></span>}</div>
+      {cur === i && <fieldset disabled={locked} className="cols">
         <label>Start (seconds)<input type="number" min="0" step="0.5" value={c.start} onChange={ev => patch(i, 'start', ev.target.value)} /></label>
         <label>Show for (seconds)<input type="number" min="0.5" step="0.5" value={c.duration} onChange={ev => patch(i, 'duration', ev.target.value)} /></label>
         <label>Position<select value={c.position} onChange={ev => patch(i, 'position', ev.target.value)}>{CLIP_POSITIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
@@ -40,7 +41,7 @@ export default function Clips({ e, setE, p, run, reload, locked }) {
         {c.kind === 'video' && <><label className="chk"><input type="checkbox" checked={c.loop} onChange={ev => patch(i, 'loop', ev.target.checked)} /> Loop if shorter than “Show for”</label>
           <label className="chk"><input type="checkbox" checked={c.mute} onChange={ev => patch(i, 'mute', ev.target.checked)} /> Mute the clip's sound</label></>}
         <label>Note for the backend (optional)<input value={c.note} placeholder="e.g. show while the narrator explains X" onChange={ev => patch(i, 'note', ev.target.value)} /></label>
-      </fieldset>
+      </fieldset>}
     </div>)}
     {locked
       ? <p className="muted">🔒 The backend has taken this video, so its clips can no longer be changed here.</p>

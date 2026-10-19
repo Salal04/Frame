@@ -204,3 +204,17 @@ nav .drop button:hover,.drop a:hover{background:var(--bg)}
 /* Source text options */
 .srcopts{display:grid;gap:8px;margin:8px 0}
 .srcopts .tabs{flex-wrap:wrap}
+
+/* collapsible blocks with their own Save */
+.blocks{display:grid;gap:12px;margin:14px 0}
+.blk{background:var(--clay);border-radius:22px;box-shadow:var(--small);scroll-margin-top:84px}
+.blk-head{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;padding:16px 20px;cursor:pointer;border-radius:22px}
+.blk-head:focus-visible{outline:2px solid var(--mute);outline-offset:2px}
+.blk-head b{flex:1}.blk-head small{font-weight:600}
+.blk-arrow{transition:transform .15s}.blk.open .blk-arrow{transform:rotate(180deg)}
+.blk-body{padding:0 20px 16px}.blk-body h3:first-child{margin-top:0}
+/* collapsed clips + compact open video card */
+.clip-toggle{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer;padding:6px 0;flex-wrap:wrap}
+.clip-toggle:focus-visible{outline:2px solid var(--mute);outline-offset:2px}
+.clip-toggle .blk-arrow{margin-left:auto}.clip-toggle[aria-expanded="true"] .blk-arrow{transform:rotate(180deg)}
+.vbody .blocks{display:grid;gap:8px}
