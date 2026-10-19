@@ -25,6 +25,21 @@ export const CUTS = [
   ['auto', 'Let the backend choose', 'The backend picks natural breaks. The number above is the target.'],
   ['manual', 'My own time ranges', 'You give the start and end of each reel.']]
 
+// Which part of the video the reels come from, and how many reels there are. The backend may be given the freedom to decide either.
+export const SOURCES = [
+  ['whole', 'Whole video', 'Reels are cut from the full video, start to end.'],
+  ['parts', 'Only these parts', 'You give the time ranges to take reels from. Everything outside them is left out.'],
+  ['auto', 'Backend picks the moments', 'The backend looks at the whole video and chooses the best moments itself. Some parts may not be used.']]
+export const COUNTS = [
+  ['exact', 'Exactly this many', 'Always the number you type.'],
+  ['max', 'Up to this many', 'Your number is only a ceiling. The backend makes as many as the video needs, so you may get fewer.'],
+  ['auto', 'Backend decides', 'No number needed. The backend decides how many reels the video gives and how long each one is.']]
+// short names for one planned reel: exact 2/5 · up to 5: 2 · backend decides: a single batch
+export const reelNo = r => !r ? '' : r.flex === 'auto' ? '' : r.flex ? `${r.part}` : `${r.part}/${r.of}`
+export const reelTag = (P, it) => { const r = it.reel; return !r ? P.reelName : r.flex === 'auto' ? `${P.reelName} · backend decides how many` : r.flex === 'max' ? `${P.reelName} ${r.part} (up to ${r.max})` : `${P.reelName} ${r.part}/${r.of}` }
+export const partText = r => `Part ${r?.flex ? r.part : `${r?.part}/${r?.of}`}`
+export const sourceNote = r => !r ? '' : r.source === 'parts' ? ' · from chosen parts' : r.source === 'auto' ? ' · backend picks the moments' : ''
+
 export const SOCIAL_DEFAULTS = {
   timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Karachi' } catch { return 'Asia/Karachi' } })(),
   accounts: {
@@ -36,7 +51,7 @@ export const SOCIAL_DEFAULTS = {
       tiktok: { api_key: '', organization_id: '', connected_at: '' },
       instagram: { api_key: '', organization_id: '', connected_at: '' } },
   },
-  reels: { count: 4, cut: 'equal', fit: 'blur', partLabel: true },   // how a video is divided; the planner starts from these
+  reels: { count: 4, countMode: 'exact', source: 'whole', cut: 'equal', fit: 'blur', partLabel: true },   // how a video is divided; the planner starts from these
   platforms: {
     youtube: { privacy: 'public', category: '27', madeForKids: false, tags: '', hashtags: '#shorts',
       videoTitle: '{title}', videoDescription: '{description}', reelTitle: '{title} (Part {part}/{parts})', reelDescription: '{title}\n\n{hashtags}' },
@@ -103,15 +118,18 @@ const captionOf = (pc, kind) => (kind === 'video' ? pc.videoCaption : pc.reelCap
 
 function makeItem(platform, kind, v, cfg, reel) {
   const pc = cfg.platforms[platform], isYt = platform === 'youtube', P = platformOf(platform)
-  const ctx = { title: v.title, description: v.description, project: v.single ? '' : v.project, part: reel?.part ?? '', parts: reel?.of ?? '', hashtags: pc.hashtags || '' }
+  const flex = reel?.flex || ''   // '' = fixed count; 'max' = up to N; 'auto' = the backend decides
+  // The total is unknown for a flexible reel, so "/{parts}" is dropped. With 'auto' the backend also fills in {part}.
+  const T = s => flex ? String(s || '').replace(/\s*\/\s*\{parts\}/g, '') : s
+  const ctx = { title: v.title, description: v.description, project: v.single ? '' : v.project, part: flex === 'auto' ? '{part}' : reel?.part ?? '', parts: flex ? '' : reel?.of ?? '', hashtags: pc.hashtags || '' }
   return {
     id: newId(), platform, kind, order: 0, status: 'Planned', time: 'auto',   // time "auto" = the backend picks the time of day
     video: { key: v.key, project: v.project, project_id: v.projectId, single: v.single, row: v.row, title: v.title, output: v.output, file_id: v.file_id, minutes: v.minutes, language: v.language, aspect: v.aspect || '16:9' },
     reel: reel || null,
     thumbnail: P.hasVideo && kind === 'video' ? v.thumbnail : null,   // YouTube and Facebook complete videos get the thumbnail
-    title: isYt ? fill(kind === 'video' ? pc.videoTitle : pc.reelTitle, ctx).slice(0, 100) : '',
-    description: isYt ? fill(kind === 'video' ? pc.videoDescription : pc.reelDescription, ctx) : '',
-    caption: isYt ? '' : fill(captionOf(pc, kind), ctx),
+    title: isYt ? fill(kind === 'video' ? pc.videoTitle : T(pc.reelTitle), ctx).slice(0, 100) : '',
+    description: isYt ? fill(kind === 'video' ? pc.videoDescription : T(pc.reelDescription), ctx) : '',
+    caption: isYt ? '' : fill(T(captionOf(pc, kind)), ctx),
     // format tells the backend what to post: "video" = a normal (landscape) video post, "reel" = a vertical reel
     publish: isYt ? { privacy: pc.privacy, category: pc.category, made_for_kids: !!pc.madeForKids, tags: csv(pc.tags) } : { via: 'buffer', channel_id: pc.channel_id || '', format: kind },
     result: { link: '', at: '', error: '', attempts: 0 }, moved_from: [],
@@ -121,7 +139,7 @@ function makeItem(platform, kind, v, cfg, reel) {
 // How many items each platform already has on each day (a missed item no longer holds a slot).
 export function loadOf(days, platform) {
   const load = {}
-  Object.entries(days).forEach(([d, v]) => (v.items || []).forEach(i => { if (i.platform === platform && effStatus(i, d) !== 'Missed' && i.status !== 'Failed') load[d] = (load[d] || 0) + 1 }))
+  Object.entries(days).forEach(([d, v]) => (v.items || []).forEach(i => { if (i.platform === platform && effStatus(i, d) !== 'Missed' && i.status !== 'Failed' && i.status !== 'Skipped') load[d] = (load[d] || 0) + 1 }))
   return load
 }
 
@@ -135,11 +153,18 @@ export function buildEntries({ videos, start, gap, targets, reels, cfg, existing
   const entries = [], skipped = [], gapN = Math.max(0, Math.floor(+gap || 0))
   const wantVideos = PLATFORMS.filter(P => P.hasVideo && targets[tkey(P.id, 'video')]?.on)
   const wantReels = PLATFORMS.map(P => P.id).filter(p => targets[tkey(p, 'reel')]?.on)
-  let ranges = null, count = Math.max(1, Math.floor(+reels.count || 1))
+  // manual = one reel per range you write (exact). Otherwise: which part of the video (source) and how many reels (countMode).
+  const manual = reels.cut === 'manual', source = manual ? 'ranges' : (reels.source || 'whole'), countMode = manual ? 'exact' : (reels.countMode || 'exact')
+  const cut = !manual && (source === 'auto' || countMode === 'auto') && reels.cut === 'equal' ? 'auto' : reels.cut   // "equal parts" needs a number and fixed parts
+  let ranges = null, srcRanges = null, count = Math.max(1, Math.floor(+reels.count || 1))
   if (wantReels.length) {
-    if (reels.cut === 'manual') { ranges = parseRanges(reels.manual); if (!ranges.length) throw new Error('Write at least one time range, or choose another way to cut.'); count = ranges.length }
-    else if (count > 60) throw new Error('That is a lot of reels for one video. Use 60 or fewer.')
+    if (manual) { ranges = parseRanges(reels.manual); if (!ranges.length) throw new Error('Write at least one time range, or choose another way to cut.'); count = ranges.length }
+    else {
+      if (source === 'parts') { srcRanges = parseRanges(reels.sourceText); if (!srcRanges.length) throw new Error('Write the parts of the video to use (like 0:30-3:00), or choose “Whole video”.') }
+      if (countMode !== 'auto' && count > 60) throw new Error('That is a lot of reels for one video. Use 60 or fewer.')
+    }
   }
+  const flex = countMode === 'exact' ? '' : countMode, slots = flex === 'auto' ? 1 : count   // 'auto': one batch per video, the backend splits it
   const lane = {}   // per platform: where its reel queue stands
   wantReels.forEach(p => { const t = targets[tkey(p, 'reel')]; lane[p] = { day: addDays(start, Math.max(0, Math.floor(+t.offset || 0))), per: Math.max(1, Math.floor(+t.perDay || 1)), load: loadOf(days, p) } })
   const put = (date, item) => { const k = dupKey(item); if (existing.has(k)) { skipped.push(item); return false } existing.add(k); entries.push({ date, item }); return true }
@@ -147,8 +172,8 @@ export function buildEntries({ videos, start, gap, targets, reels, cfg, existing
     wantVideos.forEach(P => put(addDays(start, vi * gapN + Math.max(0, Math.floor(+targets[tkey(P.id, 'video')].offset || 0))), makeItem(P.id, 'video', v, cfg, null)))
     wantReels.forEach(p => {
       const L = lane[p]
-      for (let n = 1; n <= count; n++) {
-        const reel = { part: n, of: count, cut: reels.cut, fit: reels.fit, part_label: !!reels.partLabel, range_sec: ranges ? ranges[n - 1] : null }
+      for (let n = 1; n <= slots; n++) {
+        const reel = { part: n, of: flex === 'auto' ? null : count, flex, max: flex === 'max' ? count : null, per_day: L.per, source, source_sec: srcRanges, cut, fit: reels.fit, part_label: !!reels.partLabel, range_sec: ranges ? ranges[n - 1] : null }
         const item = makeItem(p, 'reel', v, cfg, reel)
         if (existing.has(dupKey(item))) { skipped.push(item); continue }
         while ((L.load[L.day] || 0) >= L.per) L.day = addDays(L.day, 1)
@@ -156,7 +181,7 @@ export function buildEntries({ videos, start, gap, targets, reels, cfg, existing
       }
     })
   })
-  return { entries, skipped, count }
+  return { entries, skipped, count: slots }
 }
 
 // ---------------------------------------------------------------- reading the day files
@@ -176,7 +201,7 @@ export const existingKeys = days => new Set(Object.values(days).flatMap(d => (d.
 // One short line per platform+kind for a video: "TikTok reels 2/5 uploaded · 18–22 Oct"
 export function summarize(entries) {
   const g = {}
-  entries.forEach(e => { const k = `${e.item.platform}:${e.item.kind}`; (g[k] ||= []).push(e) })
+  entries.filter(e => e.item.status !== 'Skipped').forEach(e => { const k = `${e.item.platform}:${e.item.kind}`; (g[k] ||= []).push(e) })
   return Object.entries(g).map(([k, list]) => {
     const [pf, kind] = k.split(':'), P = platformOf(pf), dates = list.map(x => x.date).sort()
     const up = list.filter(x => x.eff === 'Uploaded').length, late = list.filter(x => x.eff === 'Missed' || x.eff === 'Failed').length
@@ -243,7 +268,11 @@ export function checkItem(it, { connected = true, date = '', today = todayISO() 
     if (yt && th) add('info', 'YouTube accepts custom thumbnails only on verified channels (phone verification).')
   }
   if (reel && it.reel) {
-    const sec = it.reel.range_sec ? Math.round(it.reel.range_sec[1] - it.reel.range_sec[0]) : it.video?.minutes && it.reel.of ? Math.round(it.video.minutes * 60 / it.reel.of) : 0
+    const r = it.reel, span = r.range_sec ? r.range_sec[1] - r.range_sec[0] : r.source_sec?.length ? r.source_sec.reduce((a, [s, e]) => a + e - s, 0) : r.source === 'auto' ? 0 : (it.video?.minutes || 0) * 60
+    const sec = Math.round(r.range_sec ? span : r.flex === 'auto' || !r.of ? 0 : span / r.of)
+    if (r.flex === 'auto') add('info', 'The backend decides how many reels this video gives and how long each one is.')
+    else if (r.flex === 'max') add('info', `Up to ${r.max} reels. The backend makes only as many as the video needs; the slots it does not use are marked Skipped.`)
+    if (r.source === 'auto') add('info', 'The backend picks the moments of the video itself.')
     if (sec > 90) add('warn', `About ${sec} seconds. That is long for a reel; more parts make shorter reels.`); else if (sec) add('ok', `About ${sec} seconds per reel.`)
     if (arOf(it.video?.aspect) > 1.2 && it.reel.fit === 'crop') add('info', 'A wide video cropped to vertical loses about two thirds of the picture. “Blurred background” keeps all of it.')
   }

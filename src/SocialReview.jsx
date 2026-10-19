@@ -13,7 +13,7 @@ const ICON = { ok: '✓', info: 'ℹ', warn: '⚠', bad: '✕' }
 const FOLD = { instagram: 125, tiktok: 100, facebook: 140 }   // characters people see before “more”
 
 export const headline = it => it.platform === 'youtube' ? (it.title || it.video?.title || '') : ((it.caption || '').split('\n')[0].slice(0, 80) || it.video?.title || '')
-export const labelOf = it => { const Pf = X.platformOf(it.platform); return it.kind === 'video' ? `${Pf.name} video` : `${Pf.name} ${Pf.reelName.toLowerCase()} ${it.reel?.part}/${it.reel?.of}` }
+export const labelOf = it => { const Pf = X.platformOf(it.platform); return it.kind === 'video' ? `${Pf.name} video` : `${Pf.name} ${Pf.reelName.toLowerCase()} ${it.reel?.flex === 'auto' ? '(backend decides how many)' : X.reelNo(it.reel)}` }
 
 export function IssueChip({ list }) {
   const bad = list.filter(x => x.level === 'bad'), warn = list.filter(x => x.level === 'warn'), n = bad.length + warn.length
@@ -162,7 +162,7 @@ export default function Review({ w, item, date, cfg, vids, connected, mode, nav,
   const who = yt ? (cfg.accounts.youtube.channel_title || 'Your channel') : (pc.channel_name || `Your ${item.platform === 'facebook' ? 'page' : 'account'}`)
   const text = yt ? f.title : f.caption, fold = FOLD[item.platform] || 150, shown = text.slice(0, fold), hidden = text.slice(fold)
   const over = ratio => ratio < .6 && reel && <>
-    {f.partLabel && <span className="rv-part">Part {item.reel.part}/{item.reel.of}</span>}
+    {f.partLabel && <span className="rv-part">{X.partText(item.reel)}</span>}
     <div className="rv-cap"><b>{(item.video?.title || '').slice(0, 40)}</b></div>
     {safe && <><i className="z r" /><i className="z b" /><i className="z t" /></>}</>
   const fitFor = reel ? f.fit : 'contain'
@@ -170,7 +170,7 @@ export default function Review({ w, item, date, cfg, vids, connected, mode, nav,
   const Post = () => reel
     ? <div className="rv-phone"><div className="rv-fr" style={{ aspectRatio: 9 / 16 }}>
         {stand ? <>{fitFor === 'blur' && Math.abs(9 / 16 - sa) > .03 && <img className="bgb" src={stand} alt="" />}<img className="fg" src={stand} alt="" style={{ objectFit: fitFor === 'crop' || Math.abs(9 / 16 - sa) < .03 ? 'cover' : 'contain' }} /></> : <div className="ph" />}
-        {f.partLabel && <span className="rv-part">Part {item.reel.part}/{item.reel.of}</span>}
+        {f.partLabel && <span className="rv-part">{X.partText(item.reel)}</span>}
         <div className="rv-side"><span>♥</span><span>💬</span><span>↗</span></div>
         <div className="rv-bot"><b>@{who}</b><span dir="auto">{shown}{hidden && <span className="dim"> … more</span>}</span></div></div>
         <small className="muted">{Pf.name} {Pf.reelName.toLowerCase()} · simplified mock-up</small></div>
@@ -212,8 +212,8 @@ export default function Review({ w, item, date, cfg, vids, connected, mode, nav,
 
           {reel && <div className="panel"><h4 style={{ marginTop: 0 }}>Vertical format</h4>
             <div className="seg tabs" style={{ margin: '4px 0' }}>{[['blur', 'Whole picture on a blurred background'], ['crop', 'Centre crop to fill the screen']].map(([k, l]) => <button key={k} className={f.fit === k ? 'on' : ''} onClick={() => set('fit')(k)}>{l}</button>)}</div>
-            <label className="chk"><input type="checkbox" checked={f.partLabel} onChange={e => set('partLabel')(e.target.checked)} />Show “Part {item.reel.part}/{item.reel.of}” on the reel</label>
-            <small className="hint">Cut: {item.reel.cut}{item.reel.range_sec ? ` · ${item.reel.range_sec[0]}s to ${item.reel.range_sec[1]}s` : ''}. See the result in the Shapes tab.</small></div>}
+            <label className="chk"><input type="checkbox" checked={f.partLabel} onChange={e => set('partLabel')(e.target.checked)} />Show “{X.partText(item.reel)}” on the reel</label>
+            <small className="hint">{item.reel.flex === 'auto' ? 'The backend decides how many reels and how long each is. ' : item.reel.flex === 'max' ? `Up to ${item.reel.max} reels; the backend may make fewer. ` : ''}{item.reel.source === 'parts' ? `Only from: ${(item.reel.source_sec || []).map(r => `${r[0]}s-${r[1]}s`).join(', ')}. ` : item.reel.source === 'auto' ? 'The backend picks the moments. ' : ''}Cut: {item.reel.cut}{item.reel.range_sec ? ` · ${item.reel.range_sec[0]}s to ${item.reel.range_sec[1]}s` : ''}. See the result in the Shapes tab.</small></div>}
 
           {mode === 'saved' && <label>Goes out on<input type="date" min={X.todayISO()} value={f.day} onChange={e => set('day')(e.target.value)} /></label>}
         </div>

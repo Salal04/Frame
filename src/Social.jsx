@@ -9,7 +9,7 @@ import Review, { ReviewRow, IssueChip, headline } from './SocialReview.jsx'
 // The backend reads the day file (Frame AI/Social/Days/<date>.json), picks the time of day and uploads.
 const isoNow = () => new Date().toISOString()
 const ready = (cfg, id) => id === 'youtube' ? !!cfg.accounts.youtube.refresh_token : !!X.bufferAccount(cfg, id).api_key && !!cfg.platforms[id].channel_id
-const kindLabel = (pf, it) => it.kind === 'video' ? 'Complete video' : `${pf.reelName} ${it.reel?.part}/${it.reel?.of}`
+const kindLabel = (pf, it) => it.kind === 'video' ? 'Complete video' : X.reelTag(pf, it)
 
 export default function Social({ w, run, pick }) {
   const [tab, setTab] = useState('videos'), [pool, setPool] = useState(null), [days, setDays] = useState({}), [soc, setSoc] = useState(null), [needs, setNeeds] = useState([])
@@ -76,7 +76,7 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
   // one target per (platform, kind): "youtube:video", "youtube:reel", "facebook:video", "facebook:reel", "tiktok:reel", "instagram:reel"
   const targetList = X.PLATFORMS.flatMap(P => [...(P.hasVideo ? [[X.tkey(P.id, 'video'), X.targetLabel(P, 'video'), false, P.id]] : []), [X.tkey(P.id, 'reel'), X.targetLabel(P, 'reel'), true, P.id]])
   const [t, setT] = useState(Object.fromEntries(targetList.map(([k, , reel]) => [k, reel ? { on: true, offset: 0, perDay: 1 } : { on: true, offset: 0 }])))
-  const [rl, setRl] = useState({ ...cfg.reels, manual: '' }), [edits, setEdits] = useState({}), [rev, setRev] = useState(null), [showAll, setShowAll] = useState(false)
+  const [rl, setRl] = useState({ ...cfg.reels, manual: '', sourceText: '' }), [edits, setEdits] = useState({}), [rev, setRev] = useState(null), [showAll, setShowAll] = useState(false)
   const chosen = order.map(k => vids.find(v => v.key === k)).filter(Boolean)
   const res = useMemo(() => { try { return X.buildEntries({ videos: chosen, start, gap, targets: t, reels: rl, cfg, existing: X.existingKeys(days), days }) } catch (e) { return { error: e.message } } }, [order.join('|'), start, gap, t, rl, days])
   // what the user changed in the review window, kept per upload so it survives a change of the planner settings
@@ -90,9 +90,13 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
   const dayList = Object.entries(byDay).sort(), warn = []
   dayList.forEach(([d, items]) => { const have = (days[d]?.items || []).filter(i => i.platform === 'youtube').length + items.filter(i => i.platform === 'youtube').length; if (have > X.YT_DAILY) warn.push(`${X.shortDay(d)} has ${have} YouTube uploads. The default YouTube API quota covers about ${X.YT_DAILY} a day, so some may fail.`) })
   ;[...new Set((res.entries || []).map(e => e.item.platform))].forEach(p => { if (!ready(cfg, p)) warn.push(`${X.platformOf(p).name} is not connected yet (see Setup). These items wait until it is.`) })
-  const est = chosen[0]?.minutes && rl.cut !== 'manual' && anyReel ? Math.round(chosen[0].minutes * 60 / Math.max(1, +rl.count || 1)) : 0
-  if (est > 90) warn.push(`With ${rl.count} reels, a ${chosen[0].minutes}-minute video gives about ${est} seconds each. That is long for a reel; add more parts.`)
-  const tag = items => { const g = {}; items.forEach(i => { const P = X.platformOf(i.platform), k = i.kind === 'video' ? `${P.name} video` : `${P.name} ${P.reelName.toLowerCase()}`; g[k] = (g[k] || 0) + 1 }); return Object.entries(g).map(([k, n]) => `${k} ×${n}`).join(' · ') }
+  const partsSec = (() => { try { return X.parseRanges(rl.sourceText).reduce((a, [s, e]) => a + e - s, 0) } catch { return 0 } })()
+  const baseSec = rl.cut === 'manual' || rl.source === 'auto' ? 0 : rl.source === 'parts' ? partsSec : (chosen[0]?.minutes || 0) * 60
+  const est = anyReel && rl.cut !== 'manual' && rl.countMode !== 'auto' && baseSec ? Math.round(baseSec / Math.max(1, +rl.count || 1)) : 0
+  if (est > 90) warn.push(`With ${rl.count} reels, ${rl.source === 'parts' ? 'the chosen parts give' : `a ${chosen[0].minutes}-minute video gives`} about ${est} seconds each. That is long for a reel; add more parts.`)
+  if (anyReel && rl.cut !== 'manual' && rl.countMode === 'auto') warn.push('The backend decides how many reels each video gives, so each video shows as one reels batch here. The backend spreads them over the following days, at the “reels a day” you set.')
+  if (anyReel && rl.cut !== 'manual' && rl.countMode === 'max') warn.push(`Up to ${rl.count} reels per video are planned. If the backend makes fewer, the unused ones are marked Skipped.`)
+  const tag = items => { const g = {}; items.forEach(i => { const P = X.platformOf(i.platform), k = i.kind === 'video' ? `${P.name} video` : `${P.name} ${P.reelName.toLowerCase()}${i.reel?.flex === 'auto' ? ' (backend decides how many)' : i.reel?.flex === 'max' ? ' (up to)' : ''}`; g[k] = (g[k] || 0) + 1 }); return Object.entries(g).map(([k, n]) => k.includes('decides') ? k : `${k} ×${n}`).join(' · ') }
   const go = () => run('Writing the day files…', async () => { await S.addEntries(w, final); setOrder([]); await done() })
 
   return <div className="panel plan">
@@ -112,12 +116,15 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
       {t[k].on && !ready(cfg, pf) && <small className="bad">not connected</small>}</div>)}
     <p className="hint">“+ days” delays that target after the start day. Reels go out in the order you chose: every reel of video 1, then video 2, and so on, the number a day that you set for each platform. Days that already hold that many are skipped. YouTube and Facebook can get the complete video and the reels; TikTok and Instagram only get reels.</p>
 
-    {anyReel && <><h4>How to divide each video into reels</h4>
+    {anyReel && <><h4>How to make the reels</h4>
       <div className="cols">
-        {rl.cut !== 'manual' && <label>Number of reels per video<input type="number" min="1" max="60" value={rl.count} onChange={e => setRl({ ...rl, count: e.target.value })} />{est > 0 && <small className="hint">About {est} seconds each for the first video.</small>}</label>}
-        <label>How to cut<select value={rl.cut} onChange={e => setRl({ ...rl, cut: e.target.value })}>{X.CUTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">{X.CUTS.find(c => c[0] === rl.cut)[2]}</small></label>
+        {rl.cut !== 'manual' && <label>Which part of the video<select value={rl.source} onChange={e => setRl({ ...rl, source: e.target.value })}>{X.SOURCES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">{X.SOURCES.find(c => c[0] === rl.source)?.[2]}</small></label>}
+        {rl.cut !== 'manual' && <label>How many reels<select value={rl.countMode} onChange={e => setRl({ ...rl, countMode: e.target.value, cut: e.target.value === 'auto' && rl.cut === 'equal' ? 'auto' : rl.cut })}>{X.COUNTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">{X.COUNTS.find(c => c[0] === rl.countMode)?.[2]}</small></label>}
+        {rl.cut !== 'manual' && rl.countMode !== 'auto' && <label>{rl.countMode === 'max' ? 'Up to' : 'Number of'} reels per video<input type="number" min="1" max="60" value={rl.count} onChange={e => setRl({ ...rl, count: e.target.value })} />{est > 0 && <small className="hint">About {est} seconds each{rl.source === 'parts' ? '' : ' for the first video'}.</small>}</label>}
+        {(rl.cut === 'manual' || rl.source !== 'auto') && <label>How to cut<select value={rl.cut} onChange={e => setRl({ ...rl, cut: e.target.value })}>{X.CUTS.filter(c => !(rl.countMode === 'auto' && c[0] === 'equal')).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">{X.CUTS.find(c => c[0] === rl.cut)?.[2]}</small></label>}
         <label>Vertical format<select value={rl.fit} onChange={e => setRl({ ...rl, fit: e.target.value })}><option value="blur">Whole picture on a blurred background</option><option value="crop">Centre crop to fill the screen</option></select></label>
         <label className="chk"><input type="checkbox" checked={rl.partLabel} onChange={e => setRl({ ...rl, partLabel: e.target.checked })} />Show “Part 1/5” on the reel</label></div>
+      {rl.cut !== 'manual' && rl.source === 'parts' && <label>Parts of the video to use, one per line<textarea rows={3} spellCheck="false" value={rl.sourceText} placeholder={'0:30-3:00\n5:00-8:20'} onChange={e => setRl({ ...rl, sourceText: e.target.value })} /><small className="hint">Minutes:seconds. Reels are made only from these parts. The same parts are used for every selected video, so use this for one video at a time.</small></label>}
       {rl.cut === 'manual' && <label>Time ranges, one reel per line<textarea rows={4} spellCheck="false" value={rl.manual} placeholder={'0:00-0:45\n0:45-1:30\n1:30-2:20'} onChange={e => setRl({ ...rl, manual: e.target.value })} /><small className="hint">Minutes:seconds. The same ranges are used for every selected video, so use this for one video at a time.</small></label>}
       <p className="hint">The same cuts are used for YouTube Shorts, Facebook Reels, TikTok and Instagram. The backend reads these settings and cuts the reels itself.</p></>}
 
@@ -143,14 +150,14 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
 // ====================================================================== ONE PLATFORM
 export function Platform({ pf, w, run, soc, days, reload, saveCfg, goSetup, vids }) {
   const today = X.todayISO(), all = useMemo(() => X.itemsOf(days, pf.id), [days])
-  const late = all.filter(e => e.eff === 'Missed' || e.eff === 'Failed'), up = all.filter(e => e.eff === 'Planned' || e.eff === 'Uploading'), done = all.filter(e => e.eff === 'Uploaded')
+  const late = all.filter(e => e.eff === 'Missed' || e.eff === 'Failed'), up = all.filter(e => e.eff === 'Planned' || e.eff === 'Uploading'), done = all.filter(e => e.eff === 'Uploaded'), skipped = all.filter(e => e.eff === 'Skipped').length
   const [bulk, setBulk] = useState({ start: today, per: 1 }), [del, setDel] = useState(null), [open, setOpen] = useState(false), [rev, setRev] = useState(null)
   const act = (msg, fn) => run(msg, async () => { await fn(); await reload() })
   const groups = {}; up.forEach(e => (groups[e.date] ||= []).push(e))
   const queue = [...late, ...up].filter(e => e.item.status !== 'Uploading'), conn = ready(soc.cfg, pf.id)   // what the review window steps through
   const review = e => setRev(queue.findIndex(x => x.item.id === e.item.id))
   return <section>
-    <div className="stats"><b>{(groups[today] || []).length}</b> today <b>{up.length}</b> planned <b>{done.length}</b> uploaded <b>{late.length}</b> need a new day</div>
+    <div className="stats"><b>{(groups[today] || []).length}</b> today <b>{up.length}</b> planned <b>{done.length}</b> uploaded <b>{late.length}</b> need a new day{skipped > 0 && <> <b>{skipped}</b> not needed</>}</div>
     {!ready(soc.cfg, pf.id) && <p className="note">{pf.name} is not connected yet, so nothing can be uploaded. Planned items wait. <button className="link" onClick={goSetup}>Connect it in Setup</button></p>}
 
     {late.length > 0 && <div className="panel late-box"><h3>Needs a new day ({late.length})</h3>
@@ -185,7 +192,7 @@ function ItemRow({ e, pf, act, w, ask, first, last, review, conn }) {
   return <div className="irow">
     <div className="grow"><span className="chip-s">{kindLabel(pf, it)}</span> <b>{it.video.title}</b>
       <br /><small className="muted">Posts as: {headline(it)}{it.edited ? ' (edited)' : ''}</small>
-      <br /><small className="muted">{it.video.single ? 'Singles' : it.video.project}{it.kind === 'video' && it.thumbnail ? ` · ${own ? 'own thumbnail' : 'thumbnail made from the project template'}` : ''}{it.reel?.cut ? ` · cut: ${it.reel.cut}` : ''}</small>
+      <br /><small className="muted">{it.video.single ? 'Singles' : it.video.project}{it.kind === 'video' && it.thumbnail ? ` · ${own ? 'own thumbnail' : 'thumbnail made from the project template'}` : ''}{it.reel?.cut ? ` · cut: ${it.reel.cut}` : ''}{X.sourceNote(it.reel)}</small>
       {(e.eff === 'Missed' || e.eff === 'Failed') && <small className="bad"><br />{e.eff === 'Missed' ? `Was planned for ${X.shortDay(e.date)} and did not go out.` : 'The backend could not upload this.'}{it.result?.error ? ` ${it.result.error}` : ''}</small>}
       {locked && <small className="muted"><br />Uploading now…</small>}</div>
     {!locked && <div className="acts">
@@ -278,8 +285,10 @@ export function Setup({ w, run, soc, saveCfg, clear }) {
 
     <div className="panel"><h3>Defaults</h3>
       <div className="cols"><label>Time zone for “day”<input value={tz} onChange={e => setTz(e.target.value)} /><small className="hint">A day file means that calendar date in this time zone, for example Asia/Karachi.</small></label>
-        <label>Reels per video<input type="number" min="1" max="60" value={rl.count} onChange={e => setRl({ ...rl, count: +e.target.value || 1 })} /></label>
-        <label>How to cut<select value={rl.cut === 'manual' ? 'equal' : rl.cut} onChange={e => setRl({ ...rl, cut: e.target.value })}>{X.CUTS.filter(c => c[0] !== 'manual').map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+        {rl.countMode !== 'auto' && <label>{rl.countMode === 'max' ? 'Up to' : 'Reels per video'}<input type="number" min="1" max="60" value={rl.count} onChange={e => setRl({ ...rl, count: +e.target.value || 1 })} /></label>}
+        <label>How many reels<select value={rl.countMode || 'exact'} onChange={e => setRl({ ...rl, countMode: e.target.value, cut: e.target.value === 'auto' && rl.cut === 'equal' ? 'auto' : rl.cut })}>{X.COUNTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+        <label>Which part of the video<select value={rl.source === 'parts' ? 'whole' : rl.source || 'whole'} onChange={e => setRl({ ...rl, source: e.target.value })}>{X.SOURCES.filter(c => c[0] !== 'parts').map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">“Only these parts” is set per plan, because the time ranges belong to one video.</small></label>
+        <label>How to cut<select value={rl.cut === 'manual' ? 'equal' : rl.cut} onChange={e => setRl({ ...rl, cut: e.target.value })}>{X.CUTS.filter(c => c[0] !== 'manual' && !((rl.countMode === 'auto' || rl.source === 'auto') && c[0] === 'equal')).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <label>Vertical format<select value={rl.fit} onChange={e => setRl({ ...rl, fit: e.target.value })}><option value="blur">Whole picture on a blurred background</option><option value="crop">Centre crop</option></select></label></div>
       <label className="chk"><input type="checkbox" checked={rl.partLabel} onChange={e => setRl({ ...rl, partLabel: e.target.checked })} />Show “Part 1/5” on reels</label>
       <div className="row"><button className="cta sm" onClick={() => run('Saving…', async () => { await saveCfg({ ...cfg, timezone: tz.trim() || cfg.timezone, reels: rl }); setOk('def') })}>Save defaults</button>{ok === 'def' && <span className="ok">Saved</span>}</div></div>
