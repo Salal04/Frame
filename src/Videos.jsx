@@ -4,6 +4,7 @@ import * as G from './drive.js'
 import { STATUSES, isLocked, VOICES, LANGS, ASPECTS, MAX_SCRIPT, buildJobs, normAspect, aspectHint } from './config.js'
 import { Confirm } from './Classic.jsx'
 import { EnginePicker, enginePhrase } from './Engine.jsx'
+import Clips from './Clips.jsx'
 import { engineLabel, estimateRender, normEngine } from './config.js'
 
 const inherit = (l = 'Playlist default') => [['', l]]
@@ -48,6 +49,7 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single }) {
         est={{ minutes: +e.minutes || cfg.minutes, scene_sec: cfg.scene_sec, quality: cfg.quality, max_scenes: cfg.max_scenes, engine: cfg.engine || 'auto' }}
         onEngine={k => setE(c => ({ ...c, engine: k }))} onFixed={k => setE(c => ({ ...c, engineFixed: k }))} />
       <label>Extra config (JSON)<textarea rows={2} spellCheck="false" value={e.extra} placeholder='{"scene_sec": 10, "quality": "high"}' onChange={up('extra')} /><small className="hint">Any VideoConfig field. Beats every other level.</small></label>
+      <Clips e={e} setE={setE} p={p} run={run} reload={reload} locked={isLocked(r.status)} />
       <label>Notes<textarea rows={2} value={e.notes} onChange={up('notes')} /></label>
       <p className="muted">Thumbnail: {r.thumbLink ? <><a href={r.thumbLink} target="_blank" rel="noreferrer">own thumbnail</a> (used for this video)</> : 'none of its own, the default template of this project is used'}</p>
       <div className="row"><button className="cta sm" onClick={save}>Save video</button>

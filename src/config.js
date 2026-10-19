@@ -161,13 +161,13 @@ export const ttsNote = m => /lite/.test(m) ? 'Lite: lighter, bigger free daily a
 export const PLAYLIST_COLS = [
   ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
   ['Audience', 'audience'], ['Language', 'language'], ['Screen Language', 'screen_language'], ['Aspect', 'aspect'], ['Voice', 'voice'], ['Engine', 'engine'], ['Engine Fixed', 'engineFixed'],
-  ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Extra Config (JSON)', 'extra'],
+  ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Custom Clips (JSON)', 'clips'], ['Extra Config (JSON)', 'extra'],
   ['Output Link', 'output'], ['Video Folder ID', 'folderId'], ['Input Folder ID', 'inputFolderId'], ['Output Folder ID', 'outputFolderId'], ['Video Folder Link', 'folderLink'], ['Notes', 'notes'], ['Updated', 'updated']]
 
 // ---------------------------------------------------------------- uploading a sheet into the Playlist sheet
 const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', scripttext: 'Script', voiceover: 'Script', inputtype: 'Input Type', type: 'Input Type', mode: 'Input Type', length: 'Minutes', duration: 'Minutes',
   desc: 'Description', videodescription: 'Description', thumbnail: 'Thumbnail Link', thumb: 'Thumbnail Link', thumbnailurl: 'Thumbnail Link', thumblink: 'Thumbnail Link',
-  engine: 'Engine', renderer: 'Engine', library: 'Engine', lib: 'Engine', aspectratio: 'Aspect', ratio: 'Aspect', shape: 'Aspect', thumbtext: 'Thumbnail Text', extra: 'Extra Config (JSON)', extraconfig: 'Extra Config (JSON)', output: 'Output Link', link: 'Output Link', no: '#', num: '#', number: '#', order: '#' }
+  engine: 'Engine', renderer: 'Engine', library: 'Engine', lib: 'Engine', aspectratio: 'Aspect', ratio: 'Aspect', shape: 'Aspect', thumbtext: 'Thumbnail Text', clips: 'Custom Clips (JSON)', customclips: 'Custom Clips (JSON)', overlays: 'Custom Clips (JSON)', extra: 'Extra Config (JSON)', extraconfig: 'Extra Config (JSON)', output: 'Output Link', link: 'Output Link', no: '#', num: '#', number: '#', order: '#' }
 const CANON = Object.fromEntries(PLAYLIST_COLS.filter(c => c[0] !== '#').map(([h]) => [norm(h), h]))
 export const canonHeader = h => { const t = String(h ?? '').trim(); if (!t) return null; if (t === '#') return '#'; return CANON[norm(t)] || ALIAS[norm(t)] || null }
 
@@ -207,6 +207,31 @@ export function importRows(head, a, table, base, stamp) {
   return out
 }
 
+// ---------------------------------------------------------------- CUSTOM CLIPS (video level only)
+// The user's own images / video clips that the backend overlays on ONE video. Saved on that video's row (column "Custom Clips (JSON)"),
+// the files sit in that video's Drive folder: <video>/Input/clips/. They are never part of the project or the global config.
+export const CLIP_POSITIONS = [['top-left', 'Top left'], ['top-right', 'Top right'], ['bottom-left', 'Bottom left'], ['bottom-right', 'Bottom right'], ['center', 'Center'], ['full', 'Full frame (covers the video)']]
+export const CLIP_ACCEPT = 'image/*,video/*'
+export const MAX_CLIPS = 20
+const num = (x, d, lo, hi) => { const n = parseFloat(x); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d }
+export const cleanClip = c => ({
+  id: String(c.id || '').slice(0, 40) || Math.random().toString(36).slice(2, 10),
+  name: String(c.name || '').slice(0, 120), kind: c.kind === 'video' ? 'video' : 'image',
+  fileId: String(c.fileId || ''), url: String(c.url || ''),
+  start: num(c.start, 0, 0, 36000), duration: num(c.duration, 5, 0.5, 36000),   // seconds, on the final video's timeline
+  position: CLIP_POSITIONS.some(p => p[0] === c.position) ? c.position : 'bottom-right',
+  width: num(c.width, 25, 5, 100), opacity: num(c.opacity, 100, 5, 100),         // percent of the frame width / percent visible
+  loop: !!c.loop, mute: c.mute === undefined ? true : !!c.mute,                  // loop/mute matter for video clips only
+  note: String(c.note || '').slice(0, 200),
+})
+export const parseClips = s => { try { const a = Array.isArray(s) ? s : JSON.parse(String(s || '').trim() || '[]'); return Array.isArray(a) ? a.filter(c => c && (c.fileId || c.url)).slice(0, MAX_CLIPS).map(cleanClip) : [] } catch { return [] } }
+export const stringifyClips = a => a.length ? JSON.stringify(a.map(cleanClip)) : ''   // empty list = empty cell
+// What the backend receives as config.custom_clips (snake_case, same names as VideoConfig). Empty list = the key is left out.
+export const clipsFor = v => parseClips(v.clips).map((c, i) => ({
+  order: i + 1, name: c.name, type: c.kind, file_id: c.fileId, url: c.url,
+  start_sec: c.start, duration_sec: c.duration, position: c.position, width_pct: c.width, opacity_pct: c.opacity, loop: c.loop, mute: c.mute, note: c.note,
+}))
+
 // ---------------------------------------------------------------- merge the three levels into one VideoConfig
 // own thumbnail wins; otherwise the backend writes the title on the project's default template
 export const thumbnailFor = (p, v) => {
@@ -242,9 +267,10 @@ export function resolveJob(g, p, v, playlist) {
     engine, engine_fixed: fixed, engine_fallback: !fixed && engine !== 'auto',   // fixed = never swap engines; fallback = may retry a failed scene with the other engine
     urdu_font: g.tools.urdu_font, workdir: g.tools.workdir, output_dir: `${g.tools.output_dir}/${slug(playlist)}`,
     // this video's own Drive folder: read the input from input_folder_id, write every output file into output_folder_id
+    custom_clips: clipsFor(v),   // this video's own overlay clips (never inherited from project / global); backend downloads each file_id
     video_folder_id: v.folderId || '', input_folder_id: v.inputFolderId || '', output_folder_id: v.outputFolderId || '', video_folder_link: v.folderLink || '',
   }
-  Object.keys(cfg).forEach(k => cfg[k] === '' && delete cfg[k])   // empty = let config.py use its own default
+  Object.keys(cfg).forEach(k => (cfg[k] === '' || (Array.isArray(cfg[k]) && !cfg[k].length && k === 'custom_clips')) && delete cfg[k])   // empty = let config.py use its own default
   return { ...cfg, ...extra }
 }
 

@@ -1,6 +1,6 @@
 // Drive layer for the pipeline: JSON config files, the per-playlist "Playlist" sheet, thumbnails.
 import * as G from './drive.js'
-import { PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
+import { PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, clipsFor, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
 const { api, find, ensureFolder, put, read, append, log, safe, now, upload, delRow, getToken, enc, D, S } = G
 const mkFolder = (name, parent) => api(`${D}/files?fields=id`, { method: 'POST', body: JSON.stringify({ name, mimeType: G.FOLDER, parents: [parent] }) })
 const auth = () => ({ Authorization: `Bearer ${getToken()}` })
@@ -101,7 +101,7 @@ async function putText(parent, name, text, type = 'text/plain') {
 // the input side of the folder: a plain snapshot of what the user typed, so the folder is self-contained
 async function writeInput(o) {
   const isScript = o.inputType === 'Script'
-  const input = { title: o.title, input_type: isScript ? 'script' : 'prompt', topic: o.topic || '', script: isScript ? o.script || '' : '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', extra: o.extra || '', saved: now() }
+  const input = { title: o.title, input_type: isScript ? 'script' : 'prompt', topic: o.topic || '', script: isScript ? o.script || '' : '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', custom_clips: clipsFor(o), extra: o.extra || '', saved: now() }
   await putText(o.inputFolderId, 'input.json', JSON.stringify(input, null, 2), 'application/json')
   if (isScript) await putText(o.inputFolderId, 'script.txt', o.script || '')
   else await putText(o.inputFolderId, 'prompt.txt', o.topic || o.title || '')
@@ -247,4 +247,18 @@ export async function syncRecord(w, plan, data) {
   await put(id, 'Summary!A2', [['Updated', now()], ['Order', plan.order === 'sequential' ? 'One project at a time' : 'Take turns'],
     ['Next up', rec.next ? `${rec.next.playlist}: ${rec.next.title}` : 'nothing waiting'], ...Object.entries(rec.summary), ['Paused projects', rec.paused_projects.join(', ') || 'none']].map(r => r.map(c => safe(String(c)))))
   return rec
+}
+
+// ---------- custom clips: images / video clips the user wants overlaid on ONE video ----------
+// Files go to <video>/Input/clips/. The list (positions, timing ...) is saved on the video's own row by saveVideo.
+const mediaInfo = file => new Promise(res => {
+  if (!file.type.startsWith('video/')) return res({ kind: 'image', seconds: null })
+  const v = document.createElement('video'), u = URL.createObjectURL(file), done = x => { URL.revokeObjectURL(u); res(x) }
+  v.preload = 'metadata'; v.onloadedmetadata = () => done({ kind: 'video', seconds: isFinite(v.duration) ? Math.round(v.duration * 10) / 10 : null }); v.onerror = () => done({ kind: 'video', seconds: null }); v.src = u
+})
+export async function uploadVideoClip(p, o, file) {
+  if (!/^(image|video)\//.test(file.type)) throw new Error(`${file.name} is not an image or a video.`)
+  const ids = await ensureVideoFolder(p, o), inputId = o.inputFolderId || ids.inputFolderId
+  const dir = await ensureFolder('clips', inputId), [info, r] = await Promise.all([mediaInfo(file), upload(file, dir.id)])
+  return { ids, clip: { name: file.name, kind: info.kind, fileId: r.id, url: r.webViewLink, duration: info.seconds || 5 } }
 }

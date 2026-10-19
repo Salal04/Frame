@@ -196,3 +196,7 @@ nav .drop button:hover,.drop a:hover{background:var(--bg)}
 .engine .est{margin:.6rem 0 0}
 
 .statusbox{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}.statusbox .seg button:disabled{opacity:1;cursor:default}
+
+.clips{margin:14px 0}.clips h4{margin:0 0 4px}.clip{background:var(--clay);border-radius:20px;padding:10px 16px;margin:10px 0;box-shadow:var(--small)}
+.clip-h{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.clip-btns{margin-left:auto;display:flex;gap:6px}
+.clip fieldset{border:0;padding:0;margin:8px 0 0;min-width:0}.clip label.chk{flex-direction:row;align-items:center;gap:8px}.clip label.chk input{width:auto}
