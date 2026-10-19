@@ -3,6 +3,7 @@ import * as G from './drive.js'
 import * as S from './social.js'
 import * as X from './socialPlan.js'
 import { Confirm } from './Classic.jsx'
+import Blocks, { Fold } from './Blocks.jsx'
 import Review, { ReviewRow, IssueChip, headline } from './SocialReview.jsx'
 
 // Social: decide WHICH finished video goes out on WHICH day, in WHAT order, and how it is cut into reels.
@@ -108,15 +109,17 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
     <div className="cols"><label>First video goes out on<input type="date" value={start} min={X.todayISO()} onChange={e => setStart(e.target.value)} /></label>
       {anyVideo && <label>Days between one complete video and the next<input type="number" min="0" value={gap} onChange={e => setGap(e.target.value)} /><small className="hint">0 = all on the same day, 1 = one a day, 2 = every other day.</small></label>}</div>
 
-    <h4>Where it goes</h4>
+    <Fold title="Where it goes" note={`${targetList.filter(([k]) => t[k].on).length} of ${targetList.length} on`}>
     {rows.map(([k, label, reel, pf]) => <div className="target" key={k}>
       <label className="chk"><input type="checkbox" checked={t[k].on} onChange={e => set(k, { on: e.target.checked })} />{label}</label>
       <span className="inl">starts +<input className="mini" type="number" min="0" value={t[k].offset} onChange={e => set(k, { offset: e.target.value })} /> day(s)</span>
       {reel && <span className="inl"><input className="mini" type="number" min="1" value={t[k].perDay} onChange={e => set(k, { perDay: e.target.value })} /> reel(s) a day</span>}
       {t[k].on && !ready(cfg, pf) && <small className="bad">not connected</small>}</div>)}
     <p className="hint">“+ days” delays that target after the start day. Reels go out in the order you chose: every reel of video 1, then video 2, and so on, the number a day that you set for each platform. Days that already hold that many are skipped. YouTube and Facebook can get the complete video and the reels; TikTok and Instagram only get reels.</p>
+    </Fold>
 
-    {anyReel && <><h4>How to make the reels</h4>
+
+    {anyReel && <Fold title="How to make the reels" note={`${rl.countMode === 'auto' ? 'backend decides' : rl.count + ' per video'}`}>
       <div className="cols">
         {rl.cut !== 'manual' && <label>Which part of the video<select value={rl.source} onChange={e => setRl({ ...rl, source: e.target.value })}>{X.SOURCES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">{X.SOURCES.find(c => c[0] === rl.source)?.[2]}</small></label>}
         {rl.cut !== 'manual' && <label>How many reels<select value={rl.countMode} onChange={e => setRl({ ...rl, countMode: e.target.value, cut: e.target.value === 'auto' && rl.cut === 'equal' ? 'auto' : rl.cut })}>{X.COUNTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">{X.COUNTS.find(c => c[0] === rl.countMode)?.[2]}</small></label>}
@@ -126,7 +129,7 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
         <label className="chk"><input type="checkbox" checked={rl.partLabel} onChange={e => setRl({ ...rl, partLabel: e.target.checked })} />Show “Part 1/5” on the reel</label></div>
       {rl.cut !== 'manual' && rl.source === 'parts' && <label>Parts of the video to use, one per line<textarea rows={3} spellCheck="false" value={rl.sourceText} placeholder={'0:30-3:00\n5:00-8:20'} onChange={e => setRl({ ...rl, sourceText: e.target.value })} /><small className="hint">Minutes:seconds. Reels are made only from these parts. The same parts are used for every selected video, so use this for one video at a time.</small></label>}
       {rl.cut === 'manual' && <label>Time ranges, one reel per line<textarea rows={4} spellCheck="false" value={rl.manual} placeholder={'0:00-0:45\n0:45-1:30\n1:30-2:20'} onChange={e => setRl({ ...rl, manual: e.target.value })} /><small className="hint">Minutes:seconds. The same ranges are used for every selected video, so use this for one video at a time.</small></label>}
-      <p className="hint">The same cuts are used for YouTube Shorts, Facebook Reels, TikTok and Instagram. The backend reads these settings and cuts the reels itself.</p></>}
+      <p className="hint">The same cuts are used for YouTube Shorts, Facebook Reels, TikTok and Instagram. The backend reads these settings and cuts the reels itself.</p></Fold>}
 
     <h4>Preview</h4>
     {res.error ? <p className="bad">{res.error}</p> : <>
@@ -205,29 +208,34 @@ function ItemRow({ e, pf, act, w, ask, first, last, review, conn }) {
 }
 
 function PlatformSettings({ pf, soc, run, saveCfg }) {
-  const cur = soc.cfg.platforms[pf.id], [d, setD] = useState(cur), [ok, setOk] = useState(false)
-  const up = k => e => { setD({ ...d, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }); setOk(false) }
+  const cur = soc.cfg.platforms[pf.id], [d, setD] = useState(cur)
+  const up = k => e => setD(x => ({ ...x, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }))
   const yt = pf.id === 'youtube'
+  const saveAll = () => run('Saving…', async () => { await saveCfg({ ...soc.cfg, platforms: { ...soc.cfg.platforms, [pf.id]: { ...cur, ...d } } }); return true })
+  const items = yt ? [
+    { id: 'who', title: 'Privacy and category', note: d.privacy, body: <>
+      <div className="cols"><label>Who can watch<select value={d.privacy} onChange={up('privacy')}><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label>
+        <label>Category<select value={d.category} onChange={up('category')}>{X.YT_CATEGORIES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label></div>
+      <label className="chk"><input type="checkbox" checked={!!d.madeForKids} onChange={up('madeForKids')} />These videos are made for kids (YouTube requires this to be declared)</label></> },
+    { id: 'tags', title: 'Tags and hashtags', body: <>
+      <label>Tags (comma separated)<input value={d.tags} onChange={up('tags')} /></label>
+      <label>Default hashtags<input value={d.hashtags} onChange={up('hashtags')} /></label></> },
+    { id: 'video', title: 'Complete video text', body: <>
+      <label>Complete video: title<input value={d.videoTitle} onChange={up('videoTitle')} /></label>
+      <label>Complete video: description<textarea rows={3} value={d.videoDescription} onChange={up('videoDescription')} /></label></> },
+    { id: 'shorts', title: 'Shorts text', body: <>
+      <label>Shorts: title<input value={d.reelTitle} onChange={up('reelTitle')} /></label>
+      <label>Shorts: description<textarea rows={3} value={d.reelDescription} onChange={up('reelDescription')} /></label></> }]
+  : [
+    ...(pf.hasVideo ? [
+      { id: 'video', title: 'Complete video caption', body: <label>Complete video: caption<textarea rows={4} value={d.videoCaption} onChange={up('videoCaption')} /></label> },
+      { id: 'reel', title: `${pf.reelName} caption`, body: <label>{pf.reelName}: caption<textarea rows={3} value={d.reelCaption} onChange={up('reelCaption')} /></label> }]
+      : [{ id: 'caption', title: 'Caption', body: <label>Caption<textarea rows={4} value={d.caption} onChange={up('caption')} /></label> }]),
+    { id: 'tags', title: 'Hashtags', body: <label>Default hashtags<input value={d.hashtags} onChange={up('hashtags')} /></label> }]
   return <div className="panel"><h3>{pf.name} settings</h3>
     <p className="hint">Words you can use: {'{title}'} {'{description}'} {'{project}'} {'{part}'} {'{parts}'} {'{hashtags}'}. Changes apply to videos you plan from now on; already planned items keep their text.</p>
-    {yt ? <>
-      <div className="cols"><label>Who can watch<select value={d.privacy} onChange={up('privacy')}><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label>
-        <label>Category<select value={d.category} onChange={up('category')}>{X.YT_CATEGORIES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
-        <label>Tags (comma separated)<input value={d.tags} onChange={up('tags')} /></label>
-        <label>Default hashtags<input value={d.hashtags} onChange={up('hashtags')} /></label></div>
-      <label className="chk"><input type="checkbox" checked={!!d.madeForKids} onChange={up('madeForKids')} />These videos are made for kids (YouTube requires this to be declared)</label>
-      <label>Complete video: title<input value={d.videoTitle} onChange={up('videoTitle')} /></label>
-      <label>Complete video: description<textarea rows={3} value={d.videoDescription} onChange={up('videoDescription')} /></label>
-      <label>Shorts: title<input value={d.reelTitle} onChange={up('reelTitle')} /></label>
-      <label>Shorts: description<textarea rows={3} value={d.reelDescription} onChange={up('reelDescription')} /></label></>
-      : <>
-        <p className="muted">{pf.id === 'facebook' ? 'Page' : 'Channel'}: <b>{cur.channel_name || cur.channel_id || 'not chosen'}</b> (change it in Setup)</p>
-        {pf.hasVideo ? <>
-          <label>Complete video: caption<textarea rows={4} value={d.videoCaption} onChange={up('videoCaption')} /></label>
-          <label>{pf.reelName}: caption<textarea rows={3} value={d.reelCaption} onChange={up('reelCaption')} /></label></>
-          : <label>Caption<textarea rows={4} value={d.caption} onChange={up('caption')} /></label>}
-        <label>Default hashtags<input value={d.hashtags} onChange={up('hashtags')} /></label></>}
-    <div className="row"><button className="cta sm" onClick={() => run('Saving…', async () => { await saveCfg({ ...soc.cfg, platforms: { ...soc.cfg.platforms, [pf.id]: { ...cur, ...d } } }); setOk(true) })}>Save {pf.name} settings</button>{ok && <span className="ok">Saved</span>}</div>
+    {!yt && <p className="muted">{pf.id === 'facebook' ? 'Page' : 'Channel'}: <b>{cur.channel_name || cur.channel_id || 'not chosen'}</b> (change it in Setup)</p>}
+    <Blocks items={items} save={saveAll} stamp={d} />
   </div>
 }
 
@@ -238,7 +246,7 @@ export function Setup({ w, run, soc, saveCfg, clear }) {
   const BP = X.BUFFER_PLATFORMS.map(p => p.id)   // facebook, tiktok, instagram: each with its own Buffer key and channel
   const [keys, setKeys] = useState(Object.fromEntries(BP.map(id => [id, bf[id]?.api_key || bf.api_key || ''])))
   const [ch, setCh] = useState(Object.fromEntries(BP.map(id => [id, { id: cfg.platforms[id].channel_id, name: cfg.platforms[id].channel_name }])))
-  const [tz, setTz] = useState(cfg.timezone), [rl, setRl] = useState(cfg.reels), [ok, setOk] = useState('')
+  const [tz, setTz] = useState(cfg.timezone), [rl, setRl] = useState(cfg.reels)
   const connectYt = () => run('Connecting YouTube…', async () => {
     const j = await G.connectYouTube()
     if (!j.channel) throw new Error('That Google account has no YouTube channel. Choose the account that owns the channel, or create the channel first.')
@@ -254,7 +262,7 @@ export function Setup({ w, run, soc, saveCfg, clear }) {
     const buffer = { api_key: '', organization_id: '', connected_at: '', ...Object.fromEntries(BP.map(id => [id, acc(id)])) }
     await saveCfg({ ...cfg, accounts: { ...cfg.accounts, buffer },
       platforms: { ...cfg.platforms, ...Object.fromEntries(BP.map(id => [id, { ...cfg.platforms[id], channel_id: ch[id].id.trim(), channel_name: ch[id].name }])) } })
-    await clear(BP); setOk('buffer')
+    await clear(BP); return true
   })
   const pick = (pf, id) => { const c = found[pf]?.channels.find(x => x.id === id); setCh({ ...ch, [pf]: { id, name: c?.name || '' } }) }
   const opts = pf => (found[pf]?.channels || []).filter(c => c.service.includes(pf))
@@ -266,31 +274,31 @@ export function Setup({ w, run, soc, saveCfg, clear }) {
   const chanRow = pf => <div className="cols" key={pf}>
     <label>{X.platformOf(pf).name} {pf === 'facebook' ? 'Page' : 'channel'}{opts(pf).length > 0 && <select value={ch[pf].id} onChange={e => pick(pf, e.target.value)}><option value="">Choose…</option>{opts(pf).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}</label>
     <label>{X.platformOf(pf).name} {pf === 'facebook' ? 'Page' : 'channel'} ID<input value={ch[pf].id} onChange={e => setCh({ ...ch, [pf]: { id: e.target.value, name: ch[pf].name } })} placeholder="Found with “Find my channels”, or typed" /></label></div>
-  return <section>
-    <p className="muted">Everything here is saved once in <b>Frame AI / Social / social_config.json</b> in your Drive, and the backend reads it from there, so you never paste it twice. That file holds logins: keep the Social folder private.</p>
-
-    <div className="panel"><h3>YouTube</h3>
+  const saveDefaults = () => run('Saving…', async () => { await saveCfg({ ...cfg, timezone: tz.trim() || cfg.timezone, reels: rl }); return true })
+  const bufBlock = pf => ({ id: 'buf-' + pf, title: X.platformOf(pf).name + ' (Buffer)', note: ch[pf].name || ch[pf].id || (keys[pf].trim() ? 'key added' : 'not set'), body: <>
+    {pf === BP[0] && <p className="hint">Each platform has its own Buffer API key. If they are all in the same Buffer account, paste the same key in each block.</p>}
+    {keyBlock(pf, `${X.platformOf(pf).name} Buffer API key`)}{chanRow(pf)}
+    <label className="chk"><input type="checkbox" checked={show} onChange={e => setShow(e.target.checked)} />Show keys</label>
+    <div className="row tight"><a className="ghost sm" target="_blank" rel="noreferrer" href="https://publish.buffer.com/settings/api">Open Buffer API settings</a></div>
+    {pf === BP[BP.length - 1] && <p className="hint">If “Find my channels” is blocked by the browser, open the Explorer on developers.buffer.com, list your channels there and paste the IDs. If they are different accounts, log in to each Buffer account to create its own key.</p>}</> })
+  const items = [
+    { id: 'youtube', title: 'YouTube', note: yt.refresh_token ? 'connected' : 'not connected', noSave: true, body: <>
       <p>{yt.refresh_token ? <>Connected to <b>{yt.channel_title || yt.channel_id}</b>.</> : 'Not connected.'}</p>
       <div className="row"><button className="cta sm" onClick={connectYt}>{yt.refresh_token ? 'Connect a different channel' : 'Connect YouTube'}</button>
         {yt.refresh_token && <button className="ghost danger" onClick={() => run('Disconnecting…', () => saveCfg({ ...cfg, accounts: { ...cfg.accounts, youtube: { refresh_token: '', channel_id: '', channel_title: '', connected_at: '' } } }))}>Disconnect</button>}</div>
-      <p className="hint">Uses YouTube’s own upload API. Before it works: turn on <b>YouTube Data API v3</b> in the same Google Cloud project and add the YouTube upload scope to the consent screen. Videos uploaded through a project that Google has not audited are forced to Private, so for public uploads apply for the YouTube API audit.</p></div>
-
-    <div className="panel"><h3>Buffer (Facebook, TikTok and Instagram)</h3>
-      <p className="hint">Each platform has its own Buffer API key. If they are all in the same Buffer account, paste the same key in each field.</p>
-      {BP.map(pf => <div key={pf}><h4>{X.platformOf(pf).name}</h4>{keyBlock(pf, `${X.platformOf(pf).name} Buffer API key`)}{chanRow(pf)}</div>)}
-      <label className="chk"><input type="checkbox" checked={show} onChange={e => setShow(e.target.checked)} />Show keys</label>
-      <div className="row"><a className="ghost" target="_blank" rel="noreferrer" href="https://publish.buffer.com/settings/api">Open Buffer API settings</a>
-        <button className="cta sm" disabled={!BP.some(id => keys[id].trim())} onClick={saveBuffer}>Save Buffer</button>{ok === 'buffer' && <span className="ok">Saved</span>}</div>
-      <p className="hint">If “Find my channels” is blocked by the browser, open the Explorer on developers.buffer.com, list your channels there and paste the IDs. If they are different accounts, log in to each Buffer account to create its own key.</p></div>
-
-    <div className="panel"><h3>Defaults</h3>
-      <div className="cols"><label>Time zone for “day”<input value={tz} onChange={e => setTz(e.target.value)} /><small className="hint">A day file means that calendar date in this time zone, for example Asia/Karachi.</small></label>
-        {rl.countMode !== 'auto' && <label>{rl.countMode === 'max' ? 'Up to' : 'Reels per video'}<input type="number" min="1" max="60" value={rl.count} onChange={e => setRl({ ...rl, count: +e.target.value || 1 })} /></label>}
+      <p className="hint">Uses YouTube’s own upload API. Before it works: turn on <b>YouTube Data API v3</b> in the same Google Cloud project and add the YouTube upload scope to the consent screen. Videos uploaded through a project that Google has not audited are forced to Private, so for public uploads apply for the YouTube API audit.</p></> },
+    ...BP.map(bufBlock),
+    { id: 'time', title: 'Time zone', note: tz, body: <label>Time zone for “day”<input value={tz} onChange={e => setTz(e.target.value)} /><small className="hint">A day file means that calendar date in this time zone, for example Asia/Karachi.</small></label> },
+    { id: 'reels', title: 'Default reels', body: <>
+      <div className="cols">{rl.countMode !== 'auto' && <label>{rl.countMode === 'max' ? 'Up to' : 'Reels per video'}<input type="number" min="1" max="60" value={rl.count} onChange={e => setRl({ ...rl, count: +e.target.value || 1 })} /></label>}
         <label>How many reels<select value={rl.countMode || 'exact'} onChange={e => setRl({ ...rl, countMode: e.target.value, cut: e.target.value === 'auto' && rl.cut === 'equal' ? 'auto' : rl.cut })}>{X.COUNTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <label>Which part of the video<select value={rl.source === 'parts' ? 'whole' : rl.source || 'whole'} onChange={e => setRl({ ...rl, source: e.target.value })}>{X.SOURCES.filter(c => c[0] !== 'parts').map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">“Only these parts” is set per plan, because the time ranges belong to one video.</small></label>
         <label>How to cut<select value={rl.cut === 'manual' ? 'equal' : rl.cut} onChange={e => setRl({ ...rl, cut: e.target.value })}>{X.CUTS.filter(c => c[0] !== 'manual' && !((rl.countMode === 'auto' || rl.source === 'auto') && c[0] === 'equal')).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <label>Vertical format<select value={rl.fit} onChange={e => setRl({ ...rl, fit: e.target.value })}><option value="blur">Whole picture on a blurred background</option><option value="crop">Centre crop</option></select></label></div>
-      <label className="chk"><input type="checkbox" checked={rl.partLabel} onChange={e => setRl({ ...rl, partLabel: e.target.checked })} />Show “Part 1/5” on reels</label>
-      <div className="row"><button className="cta sm" onClick={() => run('Saving…', async () => { await saveCfg({ ...cfg, timezone: tz.trim() || cfg.timezone, reels: rl }); setOk('def') })}>Save defaults</button>{ok === 'def' && <span className="ok">Saved</span>}</div></div>
+      <label className="chk"><input type="checkbox" checked={rl.partLabel} onChange={e => setRl({ ...rl, partLabel: e.target.checked })} />Show “Part 1/5” on reels</label></> }]
+  return <section>
+    <p className="muted">Everything here is saved once in <b>Frame AI / Social / social_config.json</b> in your Drive, and the backend reads it from there, so you never paste it twice. That file holds logins: keep the Social folder private.</p>
+    <Blocks items={items} save={id => id.startsWith('buf-') ? saveBuffer() : saveDefaults()} stamp={JSON.stringify([keys, ch, tz, rl])} />
+    <p className="hint">Each Buffer block saves all three Buffer platforms; the last two blocks save the time zone and reel defaults.</p>
   </section>
 }
