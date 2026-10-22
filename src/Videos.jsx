@@ -75,6 +75,7 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, set
       <EnginePicker engine={e.engine} fixed={e.engineFixed} inherit={engineLabel(cfg.engine || 'auto')}
         est={{ minutes: +e.minutes || cfg.minutes, scene_sec: cfg.scene_sec, quality: cfg.quality, max_scenes: cfg.max_scenes, engine: cfg.engine || 'auto' }}
         onEngine={k => setE(c => ({ ...c, engine: k }))} onFixed={k => setE(c => ({ ...c, engineFixed: k }))} />
+      <label>Web research before writing<select value={e.webResearch || ''} onChange={up('webResearch')}><option value="">{`Project setting (${cfg.web_research === false ? 'off' : 'on'})`}</option><option value="true">On: search the web about this topic</option><option value="false">Off: write without searching</option></select><small className="hint">If it is On and the search fails, the video is marked Failed. It never continues without the search.</small></label>
       <label>Extra config (JSON)<textarea rows={2} spellCheck="false" value={e.extra} placeholder='{"scene_sec": 10, "quality": "high"}' onChange={up('extra')} /><small className="hint">Any VideoConfig field. Beats every other level.</small></label>
         </> },
         { id: 'clips', title: 'Clips', note: 'uploads save by themselves', noSave: true, body: <>

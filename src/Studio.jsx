@@ -24,6 +24,7 @@ function Field({ d, value, onChange }) {
 const PS_GROUPS = [
   ['lang', 'Language and audience', ['language', 'screen_language', 'audience', 'description']],
   ['shape', 'Shape and length', ['aspect', 'minutes', 'scene_sec', 'chapter_min', 'max_scenes']],
+  ['research', 'Web research', ['web_research']],
   ['quality', 'Quality and repairs', ['quality', 'retries', 'min_steps_per_sentence', 'allow_latex']]]
 export function ProjectSettings({ cfg, save, run, single }) {
   const [d, setD] = useState(cfg), put = (k, v) => setD(x => ({ ...x, [k]: v }))
