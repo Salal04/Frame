@@ -6,12 +6,15 @@ import { STATUSES, isLocked, VOICES, LANGS, ASPECTS, MAX_SCRIPT, MAX_INSTRUCTION
 import { Confirm } from './Classic.jsx'
 import { EnginePicker, enginePhrase } from './Engine.jsx'
 import Clips from './Clips.jsx'
-import { engineLabel, estimateRender, normEngine } from './config.js'
+import Scenes, { SceneDraft, sceneNote } from './Scenes.jsx'
+import { engineLabel, estimateRender, normEngine, parseSceneText, stringifyScenes } from './config.js'
 
 const inherit = (l = 'Playlist default') => [['', l]]
 const cls = s => 'st-' + (s || 'Hold').toLowerCase().replace(/\s+/g, '-')
 
 const tooLong = t => { if ((t || '').length > MAX_SCRIPT) throw new Error(`The script is ${t.length.toLocaleString()} characters. One sheet cell holds about 50,000, so split it into two videos.`) }
+
+const scenesTooBig = t => { if ((t || '').length > MAX_SCRIPT) throw new Error('The scene list is too big for one sheet cell. Shorten the scene descriptions or split the video in two.') }
 
 // Source text: the middle road between "write it for me" and "use my script word for word".
 function SourceOptions({ mode, instruction, onMode, onInstruction }) {
@@ -28,6 +31,7 @@ function SourceOptions({ mode, instruction, onMode, onInstruction }) {
 function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, setUi }) {
   const [e, setE] = useState(r), open = !!ui.rowOpen, setOpen = v => setUi(x => ({ ...x, rowOpen: v })), tf = useRef(), sf = useRef(), up = k => ev => setE({ ...e, [k]: ev.target.value })
   const save = () => run('Saving video…', async () => {
+    scenesTooBig(e.scenes)
     if (e.inputType === 'Script') { if (!(e.script || '').trim()) throw new Error('This video is set to Script, but the script is empty.'); tooLong(e.script) }
     if (e.inputType === 'Source') { const sm = normSourceMode(e.sourceMode); if (sm === 'custom' ? !(e.instruction || '').trim() : !(e.script || '').trim()) throw new Error(sm === 'custom' ? 'Custom mode needs an instruction.' : 'This video is set to Source text, but the text is empty.'); tooLong(e.script) }
     await P.saveVideo(p, { ...e, sourceMode: e.inputType === 'Source' ? normSourceMode(e.sourceMode) : '' }); await reload(); return true })
@@ -62,6 +66,9 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, set
         : <label>Topic / prompt<textarea rows={3} value={e.topic} onChange={up('topic')} /><small className="hint">This is exactly what the pipeline receives as the topic.</small></label>}
       {e.inputType === 'Prompt' && <label>Extra instruction (optional)<textarea rows={2} maxLength={MAX_INSTRUCTION} value={e.instruction || ''} onChange={up('instruction')} placeholder="e.g. Start with a story, no maths formulas." /></label>}
       <label>Description<textarea rows={3} value={e.description} onChange={up('description')} placeholder={single ? 'Optional. Singles have no shared description, so only this one is used.' : "Optional. Written first; the project's default description is added after it."} /></label>
+        </> },
+        { id: 'scenes', title: 'Scenes', note: sceneNote(e.scenes), body: <>
+      <Scenes e={e} setE={setE} p={p} run={run} reload={reload} locked={isLocked(r.status)} />
         </> },
         { id: 'length', title: 'Length, language, voice', body: <>
       <div className="cols"><label>Minutes<input type="number" min="0.5" step="0.5" value={e.minutes} placeholder={e.inputType === 'Script' || (e.inputType === 'Source' && ['polish', 'rewrite'].includes(normSourceMode(e.sourceMode))) ? 'from text' : cfg.minutes} onChange={up('minutes')} /></label>
@@ -114,7 +121,7 @@ function SheetImport({ p, rows, run, reload }) {
   </div>
 }
 
-const BLANK = { mode: 'Prompt', title: '', topic: '', script: '', minutes: '', sourceMode: 'polish', instruction: '' }
+const BLANK = { mode: 'Prompt', title: '', topic: '', script: '', minutes: '', sourceMode: 'polish', instruction: '', sceneText: '' }
 
 export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb, gotoEdit, single }) {
   const [nt, setNt] = useState(BLANK), [del, setDel] = useState(null), [ui, setUi] = useState({}), f = useRef(), sf = useRef()
@@ -126,12 +133,13 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
   const add = () => {
     const ti = nt.title.trim(), tp = nt.topic.trim(), sc = nt.script.trim(), isScript = nt.mode === 'Script', isSource = nt.mode === 'Source', ins = nt.instruction.trim()
     if (isSource ? (nt.sourceMode === 'custom' ? !ins : !sc) : isScript ? !sc : (!ti && !tp)) return
+    const sceneStr = isScript || isSource ? stringifyScenes(parseSceneText(nt.sceneText)) : ''   // scene descriptions only travel with a script or a source text
     run(single ? 'Adding the video…' : 'Adding to the playlist…', async () => {
-      if (isScript || isSource) tooLong(sc)
+      if (isScript || isSource) { tooLong(sc); scenesTooBig(sceneStr) }
       await P.saveVideo(p, isSource
-        ? { order: rows.length + 1, title: ti || sc.slice(0, 60) || ins.slice(0, 60), topic: '', inputType: 'Source', script: sc, sourceMode: nt.sourceMode, instruction: ins, minutes: nt.minutes, status: 'Hold' }
+        ? { order: rows.length + 1, title: ti || sc.slice(0, 60) || ins.slice(0, 60), topic: '', inputType: 'Source', script: sc, sourceMode: nt.sourceMode, instruction: ins, minutes: nt.minutes, status: 'Hold', scenes: sceneStr }
         : isScript
-        ? { order: rows.length + 1, title: ti || sc.slice(0, 60), topic: '', inputType: 'Script', script: sc, minutes: nt.minutes, status: 'Hold' }
+        ? { order: rows.length + 1, title: ti || sc.slice(0, 60), topic: '', inputType: 'Script', script: sc, minutes: nt.minutes, status: 'Hold', scenes: sceneStr }
         : { order: rows.length + 1, title: ti || tp.slice(0, 60), topic: tp || ti, inputType: 'Prompt', script: '', instruction: ins, minutes: nt.minutes || cfg.minutes, status: 'Hold' })
       setNt({ ...BLANK, mode: nt.mode }); await reload() })
   }
@@ -157,9 +165,11 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
     {nt.mode === 'Prompt' && <input value={nt.instruction} maxLength={MAX_INSTRUCTION} onChange={e => setNt({ ...nt, instruction: e.target.value })} placeholder="Extra instruction (optional), e.g. start with a story" />}
     {nt.mode === 'Source' && <><textarea rows={7} value={nt.script} onChange={e => setNt({ ...nt, script: e.target.value })} placeholder="Paste the text here, straight from the book or article, or upload a file." />
       <SourceOptions mode={nt.sourceMode} instruction={nt.instruction} onMode={k => setNt({ ...nt, sourceMode: k })} onInstruction={v => setNt({ ...nt, instruction: v })} />
+      <SceneDraft text={nt.sceneText} onText={v => setNt(c => ({ ...c, sceneText: v }))} run={run} />
       <div className="row"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost" onClick={() => sf.current.click()}>Upload text file</button>
         <small className="muted">{nt.script.length.toLocaleString()} characters</small><button className="cta sm" disabled={nt.sourceMode === 'custom' ? !nt.instruction.trim() : !nt.script.trim()} onClick={add}>Add video</button></div></>}
     {nt.mode === 'Script' && <><textarea rows={7} value={nt.script} onChange={e => setNt({ ...nt, script: e.target.value })} placeholder="Paste the full script here, or upload a file." />
+      <SceneDraft text={nt.sceneText} onText={v => setNt(c => ({ ...c, sceneText: v }))} run={run} />
       <div className="row"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost" onClick={() => sf.current.click()}>Upload script file</button>
         <small className="muted">{nt.script.length.toLocaleString()} characters · .txt, .md, .pdf, .docx, .doc, .rtf, .odt</small><button className="cta sm" disabled={!nt.script.trim()} onClick={add}>Add video</button></div></>}
     </Fold>

@@ -1,6 +1,6 @@
 // Drive layer for the pipeline: JSON config files, the per-playlist "Playlist" sheet, thumbnails.
 import * as G from './drive.js'
-import { PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, clipsFor, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
+import { PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, clipsFor, scenesFor, detectSceneEngine, SCENE_FILE_RE, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
 const { api, find, ensureFolder, put, read, append, log, safe, now, upload, delRow, getToken, enc, D, S } = G
 const mkFolder = (name, parent) => api(`${D}/files?fields=id`, { method: 'POST', body: JSON.stringify({ name, mimeType: G.FOLDER, parents: [parent] }) })
 const auth = () => ({ Authorization: `Bearer ${getToken()}` })
@@ -101,7 +101,7 @@ async function putText(parent, name, text, type = 'text/plain') {
 // the input side of the folder: a plain snapshot of what the user typed, so the folder is self-contained
 async function writeInput(o) {
   const isScript = o.inputType === 'Script', isSource = o.inputType === 'Source'
-  const input = { title: o.title, input_type: isSource ? 'source' : isScript ? 'script' : 'prompt', topic: o.topic || '', script: isScript ? o.script || '' : '', source_text: isSource ? o.script || '' : '', source_mode: isSource ? o.sourceMode || 'polish' : '', custom_instruction: o.instruction || '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', custom_clips: clipsFor(o), extra: o.extra || '', saved: now() }
+  const input = { title: o.title, input_type: isSource ? 'source' : isScript ? 'script' : 'prompt', topic: o.topic || '', script: isScript ? o.script || '' : '', source_text: isSource ? o.script || '' : '', source_mode: isSource ? o.sourceMode || 'polish' : '', custom_instruction: o.instruction || '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', custom_clips: clipsFor(o), custom_scenes: scenesFor(o), extra: o.extra || '', saved: now() }
   await putText(o.inputFolderId, 'input.json', JSON.stringify(input, null, 2), 'application/json')
   if (isScript) await putText(o.inputFolderId, 'script.txt', o.script || '')
   else if (isSource) await putText(o.inputFolderId, 'source.txt', o.script || '')
@@ -262,4 +262,14 @@ export async function uploadVideoClip(p, o, file) {
   const ids = await ensureVideoFolder(p, o), inputId = o.inputFolderId || ids.inputFolderId
   const dir = await ensureFolder('clips', inputId), [info, r] = await Promise.all([mediaInfo(file), upload(file, dir.id)])
   return { ids, clip: { name: file.name, kind: info.kind, fileId: r.id, url: r.webViewLink, duration: info.seconds || 5 } }
+}
+
+// ---------- scenes: the user's own Manim / Remotion file for ONE scene of ONE video ----------
+// Files go to <video>/Input/scenes/. The scene list (descriptions, which scene uses which file) is saved on the video's own row by saveVideo.
+export async function uploadSceneFile(p, o, file, number) {
+  if (!SCENE_FILE_RE.test(file.name)) throw new Error(`${file.name} is not a scene file. Use .py for Manim, or .tsx / .jsx / .ts / .js / .zip for Remotion.`)
+  const ids = await ensureVideoFolder(p, o), inputId = o.inputFolderId || ids.inputFolderId
+  const dir = await ensureFolder('scenes', inputId)
+  const r = await upload(new File([file], `scene-${String(number).padStart(2, '0')}-${file.name}`, { type: file.type || 'text/plain' }), dir.id)
+  return { ids, file: { name: file.name, fileId: r.id, url: r.webViewLink, engine: detectSceneEngine(file.name) } }
 }

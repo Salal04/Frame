@@ -172,13 +172,13 @@ export const ttsNote = m => /lite/.test(m) ? 'Lite: lighter, bigger free daily a
 export const PLAYLIST_COLS = [
   ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Source Mode', 'sourceMode'], ['Custom Instruction', 'instruction'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
   ['Audience', 'audience'], ['Language', 'language'], ['Screen Language', 'screen_language'], ['Aspect', 'aspect'], ['Voice', 'voice'], ['Engine', 'engine'], ['Engine Fixed', 'engineFixed'], ['Web Research', 'webResearch'],
-  ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Custom Clips (JSON)', 'clips'], ['Extra Config (JSON)', 'extra'],
+  ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Custom Clips (JSON)', 'clips'], ['Scenes (JSON)', 'scenes'], ['Extra Config (JSON)', 'extra'],
   ['Output Link', 'output'], ['Video Folder ID', 'folderId'], ['Input Folder ID', 'inputFolderId'], ['Output Folder ID', 'outputFolderId'], ['Video Folder Link', 'folderLink'], ['Notes', 'notes'], ['Updated', 'updated']]
 
 // ---------------------------------------------------------------- uploading a sheet into the Playlist sheet
 const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', scripttext: 'Script', sourcetext: 'Script', booktext: 'Script', sourcemode: 'Source Mode', instruction: 'Custom Instruction', instructions: 'Custom Instruction', customprompt: 'Custom Instruction', voiceover: 'Script', inputtype: 'Input Type', type: 'Input Type', mode: 'Input Type', length: 'Minutes', duration: 'Minutes',
   desc: 'Description', videodescription: 'Description', thumbnail: 'Thumbnail Link', thumb: 'Thumbnail Link', thumbnailurl: 'Thumbnail Link', thumblink: 'Thumbnail Link',
-  webresearch: 'Web Research', research: 'Web Research', search: 'Web Research', engine: 'Engine', renderer: 'Engine', library: 'Engine', lib: 'Engine', aspectratio: 'Aspect', ratio: 'Aspect', shape: 'Aspect', thumbtext: 'Thumbnail Text', clips: 'Custom Clips (JSON)', customclips: 'Custom Clips (JSON)', overlays: 'Custom Clips (JSON)', extra: 'Extra Config (JSON)', extraconfig: 'Extra Config (JSON)', output: 'Output Link', link: 'Output Link', no: '#', num: '#', number: '#', order: '#' }
+  webresearch: 'Web Research', research: 'Web Research', search: 'Web Research', engine: 'Engine', renderer: 'Engine', library: 'Engine', lib: 'Engine', aspectratio: 'Aspect', ratio: 'Aspect', shape: 'Aspect', thumbtext: 'Thumbnail Text', clips: 'Custom Clips (JSON)', customclips: 'Custom Clips (JSON)', overlays: 'Custom Clips (JSON)', scenes: 'Scenes (JSON)', scenelist: 'Scenes (JSON)', scenedescriptions: 'Scenes (JSON)', scenedescription: 'Scenes (JSON)', extra: 'Extra Config (JSON)', extraconfig: 'Extra Config (JSON)', output: 'Output Link', link: 'Output Link', no: '#', num: '#', number: '#', order: '#' }
 const CANON = Object.fromEntries(PLAYLIST_COLS.filter(c => c[0] !== '#').map(([h]) => [norm(h), h]))
 export const canonHeader = h => { const t = String(h ?? '').trim(); if (!t) return null; if (t === '#') return '#'; return CANON[norm(t)] || ALIAS[norm(t)] || null }
 
@@ -244,6 +244,69 @@ export const clipsFor = v => parseClips(v.clips).map((c, i) => ({
   start_sec: c.start, duration_sec: c.duration, position: c.position, width_pct: c.width, opacity_pct: c.opacity, loop: c.loop, mute: c.mute, note: c.note,
 }))
 
+// ---------------------------------------------------------------- SCENES (video level only)
+// The user describes the scenes of ONE video (typed, pasted or from a .txt file). Every scene is then either
+//   'auto' : the backend builds it from the description, or
+//   'file' : the user uploaded the scene's own Manim (.py) or Remotion (.tsx / .jsx / .zip) file, the backend uses it as it is.
+// Saved on that video's row (column "Scenes (JSON)"); the uploaded files sit in <video>/Input/scenes/.
+export const MAX_SCENES = 200
+export const MAX_SCENE_TEXT = 4000
+export const SCENE_ENGINES = [['', 'Detect from the file'], ['manim', 'Manim (.py)'], ['remotion', 'Remotion (.tsx / .jsx / .zip)']]
+export const SCENE_ACCEPT = '.py,.tsx,.jsx,.ts,.js,.mjs,.zip'
+export const SCENE_FILE_RE = /\.(py|tsx|jsx|ts|js|mjs|zip)$/i
+export const detectSceneEngine = name => /\.py$/i.test(name || '') ? 'manim' : /\.(tsx|jsx|ts|js|mjs)$/i.test(name || '') ? 'remotion' : ''
+const rid = () => Math.random().toString(36).slice(2, 10)
+export const cleanScene = c => {
+  const fileId = String(c.fileId || ''), url = String(c.url || '')
+  return {
+    id: String(c.id || '').slice(0, 40) || rid(),
+    title: String(c.title || '').slice(0, 120), description: String(c.description || '').slice(0, MAX_SCENE_TEXT),
+    mode: (fileId || url) && c.mode === 'file' ? 'file' : 'auto',                       // 'file' only makes sense when a file is attached
+    fileId, url, name: String(c.name || '').slice(0, 160),
+    engine: SCENE_ENGINES.some(e => e[0] && e[0] === c.engine) ? c.engine : '',          // '' = detect from the file
+  }
+}
+export const newScene = (o = {}) => cleanScene({ id: rid(), ...o })
+const sceneUsed = s => !!(s.description.trim() || s.title.trim() || s.fileId || s.url)
+
+// Plain text -> scenes. Understands "Scene 1: title" / "Scene 2 - title" / "Scene: title" / "Shot 3" / Urdu "سین 4" headers,
+// then "1. text" numbered lines, then blank-line separated paragraphs, then one scene per line.
+const SCENE_HEAD = /^\s*(?:#{1,6}\s*)?(?:\*{1,2}\s*)?(?:scene|seen|sequence|shot|منظر|سین)\s*#?\s*(?:\d+\s*[:.\-–—)]*|[:\-–—])\s*\**\s*(.*)$/i
+const NUM_HEAD = /^\s*\d{1,3}\s*[.)]\s+(.*)$/
+export function parseSceneText(text) {
+  const t = String(text || '').replace(/\r/g, '').trim(); if (!t) return []
+  const lines = t.split('\n')
+  const split = re => { const out = []; let cur = null; for (const ln of lines) { const m = ln.match(re); if (m) { cur = { head: (m[1] || '').replace(/\*+\s*$/, '').trim(), body: [] }; out.push(cur) } else if (cur) cur.body.push(ln) } return out }
+  let found = split(SCENE_HEAD)
+  if (!found.length) { const n = split(NUM_HEAD); if (n.length >= 2) found = n }
+  let list
+  if (found.length) list = found.map(f => {
+    const body = f.body.join('\n').trim()
+    if (!body) return { title: '', description: f.head }                                   // "Scene 3: a circle grows" with nothing below = the text is the description
+    return f.head.length > 100 ? { title: '', description: f.head + '\n' + body } : { title: f.head, description: body }
+  })
+  else {
+    let blocks = t.split(/\n\s*\n+/).map(b => b.trim()).filter(Boolean)
+    if (blocks.length === 1 && lines.filter(l => l.trim()).length > 1) blocks = lines.map(l => l.trim()).filter(Boolean)
+    list = blocks.map(b => ({ title: '', description: b }))
+  }
+  return list.filter(s => s.title || s.description).slice(0, MAX_SCENES).map(s => newScene(s))
+}
+// Accepts the JSON from the sheet cell. A cell that holds plain text (someone typed the scenes straight into the sheet) is read as text.
+export const parseScenes = s => {
+  if (Array.isArray(s)) return s.filter(c => c && typeof c === 'object').slice(0, MAX_SCENES).map(cleanScene)
+  const str = String(s || '').trim(); if (!str) return []
+  try { const a = JSON.parse(str); return Array.isArray(a) ? a.filter(c => c && typeof c === 'object').slice(0, MAX_SCENES).map(cleanScene) : [] } catch { return parseSceneText(str) }
+}
+export const stringifyScenes = a => { const k = (a || []).map(cleanScene).filter(sceneUsed); return k.length ? JSON.stringify(k) : '' }   // empty list = empty cell
+// What the backend receives as config.custom_scenes (snake_case). Empty list = the key is left out.
+export const scenesFor = v => parseScenes(v.scenes).filter(sceneUsed).map((c, i) => ({
+  order: i + 1, title: c.title, description: c.description,
+  source: c.mode === 'file' ? 'file' : 'description',                                      // 'file' = use the uploaded code as it is; 'description' = build the scene from the text
+  engine: c.mode === 'file' ? (c.engine || detectSceneEngine(c.name)) : '',
+  file_id: c.mode === 'file' ? c.fileId : '', url: c.mode === 'file' ? c.url : '', file_name: c.mode === 'file' ? c.name : '',
+}))
+
 // ---------------------------------------------------------------- merge the three levels into one VideoConfig
 // own thumbnail wins; otherwise the backend writes the title on the project's default template
 export const thumbnailFor = (p, v) => {
@@ -285,9 +348,10 @@ export function resolveJob(g, p, v, playlist) {
     urdu_font: g.tools.urdu_font, workdir: g.tools.workdir, output_dir: `${g.tools.output_dir}/${slug(playlist)}`,
     // this video's own Drive folder: read the input from input_folder_id, write every output file into output_folder_id
     custom_clips: clipsFor(v),   // this video's own overlay clips (never inherited from project / global); backend downloads each file_id
+    custom_scenes: scenesFor(v), // this video's own scene list (description, or the user's own Manim / Remotion file per scene); never inherited
     video_folder_id: v.folderId || '', input_folder_id: v.inputFolderId || '', output_folder_id: v.outputFolderId || '', video_folder_link: v.folderLink || '',
   }
-  Object.keys(cfg).forEach(k => (cfg[k] === '' || (Array.isArray(cfg[k]) && !cfg[k].length && k === 'custom_clips')) && delete cfg[k])   // empty = let config.py use its own default
+  Object.keys(cfg).forEach(k => (cfg[k] === '' || (Array.isArray(cfg[k]) && !cfg[k].length && (k === 'custom_clips' || k === 'custom_scenes'))) && delete cfg[k])   // empty = let config.py use its own default
   return { ...cfg, ...extra }
 }
 
