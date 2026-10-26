@@ -31,6 +31,7 @@ export default function App() {
     {view.t === 'control' && <ControlRoom g={w.g} run={run} />}
     {view.t === 'reqs' && <Requirements w={w} run={run} />}
     {view.t === 'scenes' && <Scenes w={w} run={run} />}
+    <footer className="foot"><LegalLinks /></footer>
   </div>
 }
 
@@ -68,14 +69,37 @@ function TopBar({ here, go, busy, rootId }) {
     </nav></header>
 }
 
+function LegalLinks() {
+  return <nav className="legal" aria-label="Legal">
+    <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>
+    <a href="/terms" target="_blank" rel="noreferrer">Terms of Service</a>
+    <a href="/data-deletion" target="_blank" rel="noreferrer">Delete my data</a>
+  </nav>
+}
+
 function Landing({ onConnect, busy, err }) {
   return <main className="hero">
     <Robot mood={busy ? 'think' : 'idle'} size={220} />
     <h1>Plan a playlist. Frame builds the videos.</h1>
     <p>Connect Google Drive once. Every playlist gets its own folder, narrator, thumbnail style and a sheet of videos to produce.</p>
     <button className="cta" onClick={onConnect} disabled={!!busy}>{busy || 'Connect Google Drive'}</button>
+    <small className="consent">By connecting you agree to the <a href="/terms" target="_blank" rel="noreferrer">Terms</a> and the <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.</small>
     {err && <div className="err" role="alert">{err}</div>}
-    <small>Frame AI only touches files it creates. Nothing else in your Drive is read.</small></main>
+    <section className="about" aria-label="How Frame AI uses your data">
+      <h2>What Frame AI does</h2>
+      <p>Frame AI is a planning studio for video creators. You build playlists, write video plans, design thumbnails, keep a brand kit and schedule posts. Everything is stored in your own Google Drive and published only when you ask.</p>
+      <h3>How we use your Google data</h3>
+      <ul>
+        <li><b>Google Drive (drive.file):</b> the app creates and edits only its own “Frame AI” folder and the files inside it. It cannot see any other file in your Drive.</li>
+        <li><b>YouTube (optional):</b> if you press Connect YouTube, we upload the videos you scheduled to your channel and read just your channel name and ID to show which channel is linked.</li>
+        <li><b>Not sold, not shared, no ads:</b> your data is never sold, never used for advertising and never used to train AI models. We keep no copy on our servers.</li>
+        <li><b>You are in control:</b> delete a playlist, delete the folder, or revoke access in your Google Account at any time.</li>
+      </ul>
+      <p className="muted">Frame AI’s use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy#additional_requirements_for_specific_api_scopes" target="_blank" rel="noreferrer">Google API Services User Data Policy</a>, including the Limited Use requirements. YouTube features are subject to the <a href="https://www.youtube.com/t/terms" target="_blank" rel="noreferrer">YouTube Terms of Service</a> and the <a href="http://www.google.com/policies/privacy" target="_blank" rel="noreferrer">Google Privacy Policy</a>.</p>
+    </section>
+    <small>Frame AI only touches files it creates. Nothing else in your Drive is read.</small>
+    <LegalLinks />
+  </main>
 }
 
 const TINTS = ['#8aa0ff', '#ffb59a', '#7fe6c8', '#ffd466']
