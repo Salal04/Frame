@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import * as G from './drive.js'
 import * as P from './playlist.js'
 import { Confirm } from './Classic.jsx'
+import { useVideoList, pairGet } from './ListTools.jsx'
 
 // Browser video editor (v2). Tracks: V1 main (video / image / text slides), V2 (videos placed anywhere, with position, size, opacity),
 // Text & logo layer (opacity, fade), and 3 audio tracks: Voice (clip sound + voiceover), Background, Effects.
@@ -140,7 +141,7 @@ const Rng = ({ l, v, set, min, max, step = .01, u = '' }) => <label>{l}: <b>{+(+
 export default function Editor({ w, run, start, onSocial }) {
   const [main, setMain] = useState([]), [v2, setV2] = useState([]), [ov, setOv] = useState([]), [aud, setAud] = useState([]), [subs, setSubs] = useState([]), [look, setLook] = useState(LOOK0), [trk, setTrk] = useState(TRK0)
   const [sel, setSel] = useState(''), [tab, setTab] = useState('main'), [t, setT] = useState(0), [playing, setPlaying] = useState(false), [recording, setRecording] = useState(false)
-  const [prog, setProg] = useState(null), [out, setOut] = useState(null), [list, setList] = useState(null), [link, setLink] = useState(''), [title, setTitle] = useState(start?.r?.title || '')
+  const [prog, setProg] = useState(null), [out, setOut] = useState(null), [list, setList] = useState(null), { shown: pickShown, bar: pickBar } = useVideoList(list?.items || [], { get: pairGet, label: 'videos' }), [link, setLink] = useState(''), [title, setTitle] = useState(start?.r?.title || '')
   const [saved, setSaved] = useState(null), [saveMode, setSaveMode] = useState('copy'), [ask, setAsk] = useState(null)   // saved = what happened in Drive: { mode: 'copy' | 'replace', link, id, row }
   const [pps, setPps] = useState(40), [snapOn, setSnapOn] = useState(true), [dropLane, setDropLane] = useState(''), [fileOver, setFileOver] = useState(false), [vd, setVd] = useState(null), [guideX, setGuideX] = useState(null)
   const tm = timing(main, v2, aud, ov), S = useRef(), E = useRef({ t: 0, t0: 0, w0: 0, playing: false, raf: 0 }).current, D = useRef(() => { })
@@ -540,7 +541,7 @@ export default function Editor({ w, run, start, onSocial }) {
   const mi = main.find(o => o.id === sel), vi = v2.find(o => o.id === sel), ai = aud.find(o => o.id === sel), so = ov.find(o => o.id === sel), mk = main.findIndex(o => o.id === sel)
   const TABS = [['main', '🎞 V1'], ['v2', '🎬 V2'], ['over', '🅣 Text'], ['look', '🎨 Look'], ['audio', '🎧 Audio'], ['subs', '💬 Subs'], ['exp', '⬇ Export']]
   const ed = (k, v) => setLook(l => ({ ...l, [k]: v })), hasAny = main.length || v2.length || ov.length || aud.length
-  const Pick = ({ target }) => list && list.target === target ? <div className="pick">{!list.items.length && <p className="muted">No video has an Output link yet.</p>}{list.items.map(({ p, r }) => <div className="row tight" key={p.folderId + r.row}><button className="ghost sm" onClick={() => fromDrive(r, target)}>{p.name}: {r.title}</button></div>)}</div> : null
+  const Pick = ({ target }) => list && list.target === target ? <div className="pick">{!list.items.length && <p className="muted">No video has an Output link yet.</p>}{pickBar}{list.items.length > 0 && !pickShown.length && <p className="muted">No video matches.</p>}{pickShown.map(({ p, r }) => <div className="row tight" key={p.folderId + r.row}><button className="ghost sm" onClick={() => fromDrive(r, target)}>{p.name}: {r.title}</button></div>)}</div> : null
   const Time = ({ o, set, a, b }) => <div className="cols"><label>Starts at (s)<input type="number" step=".1" min="0" value={+o[a].toFixed(1)} onChange={e => set({ [a]: +e.target.value })} /></label>{b && <label>Until (s)<input type="number" step=".1" min="0" value={+o[b].toFixed(1)} onChange={e => set({ [b]: +e.target.value })} /></label>}</div>
   const Place = ({ o, set }) => <><div className="row tight">{PLACE.map(([n, p]) => <button key={n} className="ghost sm" onClick={() => set(p)}>{n}</button>)}</div>
     <div className="cols"><Rng l="Size (width)" v={o.w} min={.05} max={1} set={v => set({ w: v })} /><Rng l="Rotate" v={o.rot} min={-180} max={180} step="1" u="°" set={v => set({ rot: v })} /><Rng l="Left / right" v={o.x} min={0} max={1} set={v => set({ x: v })} /><Rng l="Up / down" v={o.y} min={0} max={1} set={v => set({ y: v })} /><Rng l="Rounded corners" v={o.round} min={0} max={.5} set={v => set({ round: v })} /></div></>

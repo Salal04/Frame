@@ -218,3 +218,10 @@ nav .drop button:hover,.drop a:hover{background:var(--bg)}
 .clip-toggle:focus-visible{outline:2px solid var(--mute);outline-offset:2px}
 .clip-toggle .blk-arrow{margin-left:auto}.clip-toggle[aria-expanded="true"] .blk-arrow{transform:rotate(180deg)}
 .vbody .blocks{display:grid;gap:8px}
+
+/* search / filter / sort bar for video lists */
+.ltools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+.ltools input,.ltools select{margin:0;width:auto;flex:0 1 auto;padding:8px 14px;min-width:0}
+.ltools .lt-q{flex:1 1 200px;min-width:160px}
+.ltools .lt-n{margin-left:auto}
+@media (max-width:640px){.ltools input,.ltools select{flex:1 1 100%}.ltools .lt-n{margin-left:0}}

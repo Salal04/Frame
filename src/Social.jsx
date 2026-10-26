@@ -3,6 +3,7 @@ import * as G from './drive.js'
 import * as S from './social.js'
 import * as X from './socialPlan.js'
 import { Confirm } from './Classic.jsx'
+import { useVideoList, snapGet } from './ListTools.jsx'
 import Blocks, { Fold } from './Blocks.jsx'
 import Review, { ReviewRow, IssueChip, headline } from './SocialReview.jsx'
 
@@ -47,7 +48,8 @@ export function Videos({ w, run, pool, days, soc, reload, pick }) {
   const [order, setOrder] = useState(found ? [pick] : []), [only, setOnly] = useState('open')
   const shown = vids.filter(v => only === 'all' || !(by[v.key] || []).length)
   const toggle = k => setOrder(order.includes(k) ? order.filter(x => x !== k) : [...order, k])
-  const pickable = shown.filter(X.isReady)
+  const { shown: tools, bar } = useVideoList(shown, { get: snapGet, statuses: ['Completed', 'Uploaded'] })
+  const pickable = tools.filter(X.isReady)
   return <section>
     <div className="stats"><b>{vids.length}</b> finished videos <b>{vids.filter(v => (by[v.key] || []).length).length}</b> already planned <b>{vids.filter(v => !(by[v.key] || []).length).length}</b> not planned yet</div>
     <div className="row tight"><div className="seg tabs" style={{ margin: 0 }}>{[['open', 'Not planned yet'], ['all', 'All finished']].map(([k, l]) => <button key={k} className={only === k ? 'on' : ''} onClick={() => setOnly(k)}>{l}</button>)}</div>
@@ -60,7 +62,9 @@ export function Videos({ w, run, pool, days, soc, reload, pick }) {
     <div className="cards one">
       {!vids.length && <p className="muted">No finished video yet. A video appears here when its status is Completed in its playlist.</p>}
       {vids.length > 0 && !shown.length && <p className="muted">Every finished video is already planned. Switch to “All finished” to see them.</p>}
-      {shown.map(v => { const n = order.indexOf(v.key), list = by[v.key] || [], sum = X.summarize(list)
+      {bar}
+      {shown.length > 0 && !tools.length && <p className="muted">No finished video matches the search or filter. Press Reset above.</p>}
+      {tools.map(v => { const n = order.indexOf(v.key), list = by[v.key] || [], sum = X.summarize(list)
         return <div className="panel sv" key={v.key}>
           <input type="checkbox" aria-label={`Select ${v.title}`} checked={n >= 0} disabled={!X.isReady(v)} onChange={() => toggle(v.key)} />
           <span className="num">{n >= 0 ? n + 1 : ''}</span>

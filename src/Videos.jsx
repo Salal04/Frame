@@ -6,6 +6,7 @@ import { STATUSES, isLocked, VOICES, LANGS, ASPECTS, MAX_SCRIPT, MAX_INSTRUCTION
 import { Confirm } from './Classic.jsx'
 import { EnginePicker, enginePhrase } from './Engine.jsx'
 import Clips from './Clips.jsx'
+import { useVideoList, rowGet } from './ListTools.jsx'
 import Scenes, { SceneDraft, sceneNote } from './Scenes.jsx'
 import { engineLabel, estimateRender, normEngine, parseSceneText, stringifyScenes } from './config.js'
 
@@ -128,6 +129,7 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
   const reload = async () => setRows(await P.loadVideos(p))
   const total = rows.reduce((a, r) => a + (+r.minutes || +cfg.minutes || 0), 0), noOwn = rows.filter(r => !r.thumbLink).length, t = cfg.thumb || {}
   const n = s => rows.filter(r => r.status === s).length
+  const { shown, bar } = useVideoList(rows, { get: rowGet(cfg), withProject: false })
   const waitMin = rows.filter(r => r.status === 'Waiting').reduce((a, r) => { const e = estimateRender({ minutes: +r.minutes || +cfg.minutes || 3, scene_sec: cfg.scene_sec, quality: cfg.quality, max_scenes: cfg.max_scenes, engine: normEngine(r.engine) || normEngine(cfg.engine) || 'auto' }); return [a[0] + e.sec[0] / 60, a[1] + e.sec[1] / 60] }, [0, 0])
   const fmtT = m => m >= 90 ? `${Math.round(m / 6) / 10} h` : `${Math.round(m)} min`
   const add = () => {
@@ -182,7 +184,9 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
       <a className="ghost" target="_blank" rel="noreferrer" href={`https://docs.google.com/spreadsheets/d/${p.sheetId}`}>Open sheet</a></div>
     </Fold>
     <div className="cards one">{!rows.length && <p className="muted">No videos yet. Add the first prompt or script above, upload a sheet, or type rows straight into the Playlist sheet.</p>}
-      {rows.map(r => <Row key={[r.row, r.title, r.status, r.thumbLink].join('|')} ui={ui[r.row] || {}} setUi={f => setUi(u => ({ ...u, [r.row]: f(u[r.row] || {}) }))} single={single} r={r} cfg={cfg} p={p} run={run} reload={reload} gotoThumb={gotoThumb} gotoEdit={gotoEdit} ask={setDel} />)}</div>
+      {bar}
+      {rows.length > 0 && !shown.length && <p className="muted">No video matches the search or filter. Press Reset above.</p>}
+      {shown.map(r => <Row key={[r.row, r.title, r.status, r.thumbLink].join('|')} ui={ui[r.row] || {}} setUi={f => setUi(u => ({ ...u, [r.row]: f(u[r.row] || {}) }))} single={single} r={r} cfg={cfg} p={p} run={run} reload={reload} gotoThumb={gotoThumb} gotoEdit={gotoEdit} ask={setDel} />)}</div>
     {del && <Confirm title={`Remove “${del.title}”?`} text="The row is deleted from the Playlist sheet. The video's Drive folder (Input / Output) stays." yes="Remove" onYes={() => run('Removing…', async () => { await P.deleteVideo(p, del); setDel(null); await reload() })} onNo={() => setDel(null)} />}
   </section>
 }

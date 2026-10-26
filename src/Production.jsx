@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import * as G from './drive.js'
 import * as P from './playlist.js'
+import { useVideoList } from './ListTools.jsx'
 import { STATUSES, syncPlan, buildQueue, waitingOf, countStatus, makeRecord, buildJobsAll } from './config.js'
 
 // Application level: one plan for ALL projects, kept in the sheet "Production Plan" (Application Config folder), so it can be
@@ -79,6 +80,17 @@ export default function Production({ w, run }) {
 
     <h3>Record</h3>
     <div className="cols"><div><h4>In process ({rec.in_process.length})</h4>{rec.in_process.map(r => <small key={r.playlist + r.row} className="line">{r.playlist}: {r.title}</small>)}{!rec.in_process.length && <small className="muted">none</small>}</div>
-      <div><h4>Made so far ({rec.completed.length})</h4>{rec.completed.slice(-30).reverse().map(r => <small key={r.playlist + r.row} className="line">{r.status === 'Uploaded' ? '⬆ ' : '✓ '}{r.playlist}: {r.title}{r.output && <> · <a href={r.output} target="_blank" rel="noreferrer">open</a></>}</small>)}{!rec.completed.length && <small className="muted">nothing yet</small>}</div></div>
+      <MadeSoFar items={rec.completed} /></div>
   </main>
+}
+
+// finished videos of all projects, newest first, with search / filter / sort
+function MadeSoFar({ items }) {
+  const list = items.slice().reverse()
+  const { shown, bar } = useVideoList(list, { get: r => ({ title: r.title, status: r.status, project: r.playlist }), statuses: ['Completed', 'Uploaded'] })
+  return <div><h4>Made so far ({items.length})</h4>{bar}
+    {shown.slice(0, 30).map(r => <small key={r.playlist + r.row} className="line">{r.status === 'Uploaded' ? '⬆ ' : '✓ '}{r.playlist}: {r.title}{r.output && <> · <a href={r.output} target="_blank" rel="noreferrer">open</a></>}</small>)}
+    {shown.length > 30 && <small className="muted">… and {shown.length - 30} more. Use the search to narrow the list.</small>}
+    {!items.length && <small className="muted">nothing yet</small>}
+    {items.length > 0 && !shown.length && <small className="muted">no video matches</small>}</div>
 }
