@@ -10,6 +10,7 @@ import Editor from './Editor.jsx'
 import { Narrator, ThumbStudio, ProjectSettings, ControlRoom } from './Studio.jsx'
 import { Confirm, GlobalAssets, Requirements, Scenes } from './Classic.jsx'
 import Home from './Home.jsx'
+import Guide from './Guide.jsx'
 import { pushDraft, clearDraft } from './draft.js'
 
 
@@ -54,6 +55,7 @@ export default function App() {
     {view.t === 'control' && <ControlRoom g={w.g} run={run} />}
     {view.t === 'reqs' && <Requirements w={w} run={run} />}
     {view.t === 'scenes' && <Scenes w={w} run={run} />}
+    {view.t === 'guide' && <Guide />}
     <footer className="foot"><LegalLinks /></footer>
   </div>
 }
@@ -61,7 +63,7 @@ export default function App() {
 // Main pages stay inline on desktop; everything else lives in the "More" dropdown.
 // On phones the inline links hide and one dropdown button (showing the current page) holds every page.
 const PRIMARY = [['home', 'Playlists'], ['singles', 'Singles'], ['production', 'Production'], ['editor', 'Editor'], ['social', 'Social']]
-const MORE = [['brand', 'Brand'], ['control', 'Control room'], ['reqs', 'Requirements'], ['scenes', 'Scenes']]
+const MORE = [['brand', 'Brand'], ['control', 'Control room'], ['reqs', 'Requirements'], ['scenes', 'Scenes'], ['guide', 'Guide']]
 
 function TopBar({ here, go, busy, rootId, onOut }) {
   const [open, setOpen] = useState(false), box = useRef(null)
