@@ -2,19 +2,80 @@
 const CID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 const D = 'https://www.googleapis.com/drive/v3', S = 'https://sheets.googleapis.com/v4/spreadsheets'
 export const FOLDER = 'application/vnd.google-apps.folder', SHEET = 'application/vnd.google-apps.spreadsheet'
-let token = null
+let token = null, expiresAt = 0, timer = 0
 export const getToken = () => token
 const enc = encodeURIComponent
 const now = () => new Date().toISOString().replace('T', ' ').slice(0, 19)
 
-export function signIn() {
+// ---------- log in ONCE ----------
+// First time: one Google popup. The server keeps an encrypted refresh token in an HttpOnly cookie (/api/session).
+// After that every visit, reload and new day signs in silently (/api/token): no popup, no button, no repeated logic.
+// Without the server (npm run dev) it falls back to the plain Google popup and remembers the token for the current tab.
+const LINK = 'frame.linked'
+export const isLinked = () => { try { return localStorage.getItem(LINK) === '1' } catch { return false } }
+const setLinked = on => { try { on ? localStorage.setItem(LINK, '1') : localStorage.removeItem(LINK) } catch { /* private mode: still works for this visit */ } }
+const keep = (t, secs) => {
+  token = t; expiresAt = Date.now() + (secs || 3600) * 1000
+  clearTimeout(timer); timer = setTimeout(() => refresh().catch(() => {}), Math.max(30, (secs || 3600) - 300) * 1000)   // renew 5 min before it runs out
+  try { sessionStorage.setItem('frame.tok', JSON.stringify({ t, e: expiresAt })) } catch { /* ignore */ }
+}
+async function viaServer() {
+  const x = await fetch('/api/token', { method: 'POST' }).catch(() => null)
+  if (!x || !x.ok) return null
+  const j = await x.json().catch(() => null)
+  return j?.access_token ? j : null
+}
+// get a fresh token without asking the user anything; false = they need to press Connect
+export async function refresh() {
+  const j = await viaServer()
+  if (j) { keep(j.access_token, j.expires_in); return true }
+  return false
+}
+export async function restore() {
+  try { const c = JSON.parse(sessionStorage.getItem('frame.tok') || 'null'); if (c && c.e > Date.now() + 60000) { keep(c.t, (c.e - Date.now()) / 1000); return true } } catch { /* ignore */ }
+  return refresh()
+}
+export async function signOut() {
+  clearTimeout(timer); token = null; expiresAt = 0; setLinked(false)
+  try { sessionStorage.removeItem('frame.tok') } catch { /* ignore */ }
+  await fetch('/api/session', { method: 'DELETE' }).catch(() => {})
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && token && Date.now() > expiresAt - 120000) refresh().catch(() => {}) })   // laptop slept: renew on wake
+
+function popupCode(extra = {}) {
   return new Promise((res, rej) => {
-    if (!window.google) return rej(new Error('Google script not loaded yet'))
-    window.google.accounts.oauth2.initTokenClient({
-      client_id: CID, scope: 'https://www.googleapis.com/auth/drive.file',
-      callback: r => r.access_token ? (token = r.access_token, res()) : rej(new Error(r.error || 'Sign-in failed')),
-    }).requestAccessToken({ prompt: '' })
+    window.google.accounts.oauth2.initCodeClient({
+      client_id: CID, scope: 'https://www.googleapis.com/auth/drive.file', ux_mode: 'popup', ...extra,
+      error_callback: e => rej(new Error(e?.type === 'popup_closed' ? 'Connect was cancelled' : e?.message || 'Connect failed')),
+      callback: r => r.code ? res(r.code) : rej(new Error(r.error || 'Sign-in failed')),
+    }).requestCode()
   })
+}
+async function makeSession(code) {
+  const x = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) }).catch(() => null)
+  if (!x) return { offline: true }
+  const j = await x.json().catch(() => ({}))
+  if (x.status === 404 || x.status === 405 || (x.ok && !j.access_token)) return { offline: true }   // no server functions here (plain vite dev)
+  return { ok: x.ok, status: x.status, j }
+}
+function popupToken() {
+  return new Promise((res, rej) => window.google.accounts.oauth2.initTokenClient({
+    client_id: CID, scope: 'https://www.googleapis.com/auth/drive.file',
+    callback: r => r.access_token ? (keep(r.access_token, r.expires_in), res()) : rej(new Error(r.error || 'Sign-in failed')),
+    error_callback: e => rej(new Error(e?.type === 'popup_closed' ? 'Connect was cancelled' : e?.message || 'Sign-in failed')),
+  }).requestAccessToken({ prompt: '' }))
+}
+// Safe to call any time: already signed in → nothing happens. Opens the Google popup only when there is truly no login yet.
+export async function signIn() {
+  if (token && Date.now() < expiresAt - 60000) return
+  if (await restore()) { setLinked(true); return }
+  if (!window.google) throw new Error('Google script not loaded yet')
+  let s = await makeSession(await popupCode())
+  if (!s.offline && s.status === 409) s = await makeSession(await popupCode({ prompt: 'consent' }))   // Google did not give a long-lived login the first time
+  if (s.offline) await popupToken()
+  else if (s.ok) keep(s.j.access_token, s.j.expires_in)
+  else throw new Error(s.j?.error === 'no_refresh' ? 'Google did not give a long-lived login. Remove Frame AI at myaccount.google.com/permissions and connect again.' : s.j?.error || 'Sign-in failed')
+  setLinked(true)
 }
 // Backend link: the browser gets a one-time code, /api/exchange (holds the client secret) turns it into a refresh token.
 function codeFlow(scope, extra = {}, popup = {}) {
@@ -38,8 +99,10 @@ function codeFlow(scope, extra = {}, popup = {}) {
 export const connectBackend = () => codeFlow('https://www.googleapis.com/auth/drive.file').then(j => j.refresh_token)
 // YouTube upload login for the backend. select_account lets the channel live on a different Google account than the Drive.
 export const connectYouTube = () => codeFlow('https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly', { profile: 'youtube' }, { select_account: true })
-async function api(url, opt = {}) {
+async function api(url, opt = {}, retried = false) {
+  if (token && Date.now() > expiresAt - 30000) await refresh().catch(() => {})
   const r = await fetch(url, { ...opt, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...opt.headers } })
+  if (r.status === 401 && !retried && await refresh().catch(() => false)) return api(url, opt, true)   // token expired mid-use: renew and carry on
   if (!r.ok) throw new Error((await r.text()).slice(0, 300))
   return r.status === 204 ? null : r.json()
 }
