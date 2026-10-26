@@ -73,14 +73,14 @@ function Playground({ linked, busy, onSave }) {
   </div>
 }
 
-export default function Home({ onConnect, onSave, busy, err, linked, LegalLinks }) {
+export default function Home({ onConnect, onSave, onGuide, busy, err, linked, LegalLinks }) {
   const [tip, setTip] = useState(0)
   useEffect(() => { const t = setInterval(() => setTip(i => (i + 1) % TIPS.length), 3600); return () => clearInterval(t) }, [])
   const go = id => e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
   return <div className="hm">
     <header className="hm-top">
       <b className="logo"><Robot mood="idle" size={36} />Frame AI</b>
-      <nav aria-label="Sections" className="hm-links"><a href="#how" onClick={go('how')}>How it works</a><a href="#inside" onClick={go('inside')}>What’s inside</a><a href="#try" onClick={go('try')}>Try it</a></nav>
+      <nav aria-label="Sections" className="hm-links"><a href="#how" onClick={go('how')}>How it works</a><a href="#inside" onClick={go('inside')}>What’s inside</a><a href="#try" onClick={go('try')}>Try it</a><a href="#guide" onClick={e => { e.preventDefault(); onGuide && onGuide() }}>Guides</a></nav>
       <button className="ghost sm" onClick={onConnect} disabled={!!busy}>{linked ? 'Open my studio' : 'Sign in'}</button>
     </header>
 

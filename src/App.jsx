@@ -17,7 +17,7 @@ import { pushDraft, clearDraft } from './draft.js'
 export default function App() {
   const [w, setW] = useState(null), [view, setView] = useState({ t: 'home' }), [busy, setBusy] = useState(''), [err, setErr] = useState('')
   const run = async (msg, fn) => { setBusy(msg); setErr(''); try { return await fn() } catch (e) { setErr(e.message) } finally { setBusy('') } }
-  const [linked, setLinked] = useState(G.isLinked())
+  const [linked, setLinked] = useState(G.isLinked()), [preGuide, setPreGuide] = useState(false)
   // open the Drive workspace (needs a login only the very first time; afterwards G.signIn() is a silent no-op)
   const open = async () => { await G.signIn(); setLinked(true); if (w) return w; const ws = await G.init(); ws.g = await P.loadGlobal(ws.appId); setW(ws); return ws }
   const connect = () => run('Connecting to your Google Drive…', open)
@@ -39,7 +39,8 @@ export default function App() {
     })()
     return () => { dead = true }
   }, [])
-  if (!w) return <Home onConnect={connect} onSave={saveDraft} busy={busy} err={err} linked={linked} LegalLinks={LegalLinks} />
+  if (!w && preGuide) return <div className="shell"><main className="page"><button className="ghost" onClick={() => setPreGuide(false)}>← Back</button></main><Guide /><footer className="foot"><LegalLinks /></footer></div>
+  if (!w) return <Home onGuide={() => setPreGuide(true)} onConnect={connect} onSave={saveDraft} busy={busy} err={err} linked={linked} LegalLinks={LegalLinks} />
   const here = view.t === 'playlist' ? 'home' : view.t
   return <div className="shell">
     <TopBar here={here} go={k => setView({ t: k })} busy={busy} rootId={w.rootId} onOut={signOut} />
