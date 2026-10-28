@@ -82,8 +82,10 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
   const targetList = X.PLATFORMS.flatMap(P => [...(P.hasVideo ? [[X.tkey(P.id, 'video'), X.targetLabel(P, 'video'), false, P.id]] : []), [X.tkey(P.id, 'reel'), X.targetLabel(P, 'reel'), true, P.id]])
   const [t, setT] = useState(Object.fromEntries(targetList.map(([k, , reel]) => [k, reel ? { on: true, offset: 0, perDay: 1 } : { on: true, offset: 0 }])))
   const [rl, setRl] = useState({ ...cfg.reels, manual: '', sourceText: '' }), [edits, setEdits] = useState({}), [rev, setRev] = useState(null), [showAll, setShowAll] = useState(false)
+  const [again, setAgain] = useState(false)   // true = plan a video again even if it already has planned or uploaded items
   const chosen = order.map(k => vids.find(v => v.key === k)).filter(Boolean)
-  const res = useMemo(() => { try { return X.buildEntries({ videos: chosen, start, gap, targets: t, reels: rl, cfg, existing: X.existingKeys(days), days }) } catch (e) { return { error: e.message } } }, [order.join('|'), start, gap, t, rl, days])
+  const res = useMemo(() => { try { return X.buildEntries({ videos: chosen, start, gap, targets: t, reels: rl, cfg, existing: again ? new Set() : X.existingKeys(days), days }) } catch (e) { return { error: e.message } } }, [order.join('|'), start, gap, t, rl, days, again])
+  const planned = useMemo(() => { const by = X.byVideoKey(days); return chosen.filter(v => (by[v.key] || []).length) }, [order.join('|'), days])
   // what the user changed in the review window, kept per upload so it survives a change of the planner settings
   const final = useMemo(() => (res.entries || []).map(e => { const k = X.dupKey(e.item); return edits[k] ? { ...e, item: X.applyPatch(e.item, edits[k]) } : e }), [res, edits])
   const set = (k, patch) => setT({ ...t, [k]: { ...t[k], ...patch } })
@@ -113,6 +115,10 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
     <div className="cols"><label>First video goes out on<input type="date" value={start} min={X.todayISO()} onChange={e => setStart(e.target.value)} /></label>
       {anyVideo && <label>Days between one complete video and the next<input type="number" min="0" value={gap} onChange={e => setGap(e.target.value)} /><small className="hint">0 = all on the same day, 1 = one a day, 2 = every other day.</small></label>}</div>
 
+    {(planned.length > 0 || again) && <div className="note">
+      <label className="chk"><input type="checkbox" checked={again} onChange={e => setAgain(e.target.checked)} />Schedule again, even if already planned or uploaded</label>
+      <small className="hint">{planned.length > 0 ? `${planned.length} selected video${planned.length > 1 ? 's' : ''} already ${planned.length > 1 ? 'have' : 'has'} uploads planned or done (${planned.map(v => v.title).join(', ').slice(0, 80)}). ` : ''}Turn this on to add them to the schedule once more. The earlier uploads stay as they are.</small></div>}
+
     <Fold title="Where it goes" note={`${targetList.filter(([k]) => t[k].on).length} of ${targetList.length} on`}>
     {rows.map(([k, label, reel, pf]) => <div className="target" key={k}>
       <label className="chk"><input type="checkbox" checked={t[k].on} onChange={e => set(k, { on: e.target.checked })} />{label}</label>
@@ -137,7 +143,7 @@ export function Planner({ w, run, vids, order, setOrder, soc, days, done }) {
 
     <h4>Preview</h4>
     {res.error ? <p className="bad">{res.error}</p> : <>
-      <p>{res.entries.length} upload{res.entries.length === 1 ? '' : 's'} over {dayList.length} day{dayList.length === 1 ? '' : 's'}{res.skipped.length > 0 && <span className="muted"> · {res.skipped.length} skipped because they are already planned</span>}</p>
+      <p>{res.entries.length} upload{res.entries.length === 1 ? '' : 's'} over {dayList.length} day{dayList.length === 1 ? '' : 's'}{res.skipped.length > 0 && <span className="muted"> · {res.skipped.length} skipped because they are already planned (tick “Schedule again” above to add them)</span>}</p>
       <div className="preview">{dayList.slice(0, 14).map(([d, items]) => <div key={d} className="prow"><b>{X.niceDay(d)}</b><span>{tag(items)}<small className="muted"> · {[...new Set(items.map(i => i.video.title))].join(', ').slice(0, 90)}</small></span></div>)}
         {dayList.length > 14 && <small className="muted">… and {dayList.length - 14} more days</small>}</div>
       {warn.map((x, i) => <p className="note" key={i}>{x}</p>)}
