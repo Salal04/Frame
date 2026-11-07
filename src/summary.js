@@ -11,7 +11,10 @@ const VIDEO_RE = /^video\//, DRIVE_LINK = id => `https://drive.google.com/file/d
 async function sheetOf(w) {
   if (w.summarySheet) return w.summarySheet
   const f = await find('Summary Queue', w.summary.folderId, G.SHEET)
-  if (f) return (w.summarySheet = f.id)
+  if (f) {   // older sheet without the newest columns: write the full header (new columns are only ever added at the end)
+    if (((await read(f.id, 'Summary!A1:Z1'))[0] || []).length < HEAD.length) await put(f.id, 'Summary!A1', [HEAD])
+    return (w.summarySheet = f.id)
+  }
   const id = await G.mkSheet('Summary Queue', w.summary.folderId, [{ title: 'Summary', header: HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
   await api(`${S}/${id}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests: [{ setDataValidation: { range: { sheetId: 0, startRowIndex: 1, startColumnIndex: HEAD.indexOf('Status'), endColumnIndex: HEAD.indexOf('Status') + 1 },
     rule: { condition: { type: 'ONE_OF_LIST', values: ['Hold', 'Waiting', 'In Process', 'Completed', 'Uploaded', 'Failed'].map(userEnteredValue => ({ userEnteredValue })) }, showCustomUi: true, strict: false } } }] }) }).catch(() => {})
@@ -88,3 +91,8 @@ export async function saveSummary(w, o, opts = {}) {
   await log(id, 'Summary saved', `${o.title} · ${o.status} · up to ${m} min`)
 }
 export async function removeSummary(w, o) { const id = await sheetOf(w); await delRow(id, 0, o.row - 2); await log(id, 'Source removed', o.title) }
+
+// length of a video file in Drive (seconds). Drive may not know it yet right after an upload: then null.
+export async function driveDuration(fileId) {
+  try { const j = await api(`${D}/files/${fileId}?fields=videoMediaMetadata(durationMillis)`); const ms = +j.videoMediaMetadata?.durationMillis; return ms ? Math.round(ms / 1000) : null } catch { return null }
+}

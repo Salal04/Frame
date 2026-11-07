@@ -292,9 +292,13 @@ export const customVoiceFor = (g, id) => { const v = (g?.my_voices || []).find(x
 // The user adds a YouTube link or a video file. Files live in Drive/Frame AI/Summary-a-Video/. Each one is a row in the \"Summary Queue\" sheet.
 // Hold = not started (the backend must not touch it). Waiting = the user pressed Start. The rest is set by the backend, same as playlist videos.
 export const SUMMARY_SOURCES = ['YouTube', 'Upload', 'Drive']
-export const SUMMARY_COLS = [['#', 'order'], ['Title', 'title'], ['Source', 'source'], ['YouTube Link', 'link'], ['File ID', 'fileId'], ['Drive Link', 'driveLink'], ['Max Minutes', 'maxMinutes'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Style', 'style'], ['Status', 'status'], ['Output Link', 'output'], ['Notes', 'notes'], ['Added', 'added'], ['Updated', 'updated']]
+export const SUMMARY_COLS = [['#', 'order'], ['Title', 'title'], ['Source', 'source'], ['YouTube Link', 'link'], ['File ID', 'fileId'], ['Drive Link', 'driveLink'], ['Max Minutes', 'maxMinutes'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Style', 'style'], ['Status', 'status'], ['Output Link', 'output'], ['Notes', 'notes'], ['Added', 'added'], ['Updated', 'updated'], ['Start (s)', 'startSec'], ['End (s)', 'endSec'], ['Duration (s)', 'durationSec']]
 export const SUMMARY_STYLES = [['highlights', 'Highlights: the key moments, in order'], ['story', 'Story: a short narrated retelling'], ['key_points', 'Key points: the main ideas, one by one']]
 export const SUMMARY_MIN = 0.5, SUMMARY_MAX = 60
+// time helpers: 83 -> "1:23", "1:02:03" or "83" -> seconds
+export const fmtT = s => { s = Math.max(0, Math.round(+s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0') }
+export const parseT = v => { const t = String(v ?? '').trim(); if (!t) return ''; const a = t.split(':').map(Number); if (a.some(n => !Number.isFinite(n) || n < 0) || a.length > 3) return ''; return a.reduce((s, n) => s * 60 + n, 0) }
+export const summaryPart = v => { const s = parseFloat(v.startSec), e = parseFloat(v.endSec); return Number.isFinite(e) && e > 0 ? { start: Number.isFinite(s) && s > 0 ? s : 0, end: e } : null }   // null = the whole video
 export const normSummaryStatus = s => normStatus(s)
 export function summaryJob(g, v) {
   const minutes = num(v.maxMinutes, 3, SUMMARY_MIN, SUMMARY_MAX)
@@ -304,6 +308,7 @@ export function summaryJob(g, v) {
       max_minutes: minutes, summary_style: v.style || 'highlights', language: v.language || 'en', translate_to: normLangs(v.translateTo),
       tts_models: csv(g.models.tts).join(','), light_models: csv(g.models.light).join(','), medium_models: csv(g.models.medium).join(','), code_models: csv(g.models.code).join(','),
       transcription_models: csv(g.models.transcription).join(','), rpm: +g.limits.rpm, max_wait: +g.limits.max_wait, urdu_font: g.tools.urdu_font, workdir: g.tools.workdir, output_dir: `${g.tools.output_dir}/summary`,
+      ...(summaryPart(v) ? { start_sec: summaryPart(v).start, end_sec: summaryPart(v).end } : {}), source_duration_sec: parseFloat(v.durationSec) || undefined,
       summary_folder_id: v.folderId || '',
     },
   }

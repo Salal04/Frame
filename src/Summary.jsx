@@ -1,23 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import * as S from './summary.js'
+import Trim from './SummaryTrim.jsx'
 import { Fold } from './Blocks.jsx'
 import { Confirm } from './Classic.jsx'
-import { LANGS, TRANSLATE_LANGS, normLangs, isLocked, SUMMARY_STYLES, SUMMARY_MIN, SUMMARY_MAX, buildSummaryJobs } from './config.js'
+import { LANGS, TRANSLATE_LANGS, summaryPart, fmtT, normLangs, isLocked, SUMMARY_STYLES, SUMMARY_MIN, SUMMARY_MAX, buildSummaryJobs } from './config.js'
 
 const cls = s => 'st-' + (s || 'Hold').toLowerCase().replace(/\s+/g, '-')
 
 function Item({ r, run, w, reload, ask }) {
   const [e, setE] = useState(r), locked = isLocked(r.status), up = k => ev => setE({ ...e, [k]: ev.target.value })
-  const mins = parseFloat(e.maxMinutes), bad = !(mins >= SUMMARY_MIN && mins <= SUMMARY_MAX)
+  const mins = parseFloat(e.maxMinutes), pt = summaryPart(e), bad = !(mins >= SUMMARY_MIN && mins <= SUMMARY_MAX) || (!!e.endSec && !(pt && pt.end > pt.start))
   const save = (patch = {}, msg = 'Saving…') => run(msg, async () => { await S.saveSummary(w, { ...e, ...patch }); await reload() })
   return <div className={'card video ' + cls(r.status)}>
     <div className="vhead"><span className="num">{r.order || r.row - 1}</span>
-      <div><h3>{r.title}</h3><small className="muted">{r.source === 'YouTube' ? <a href={r.link} target="_blank" rel="noreferrer">YouTube link</a> : <a href={r.driveLink} target="_blank" rel="noreferrer">{r.source === 'Upload' ? 'uploaded video' : 'video in Drive'}</a>} · summary up to {r.maxMinutes || 3} min{r.output ? '' : ''}</small></div>
+      <div><h3>{r.title}</h3><small className="muted">{r.source === 'YouTube' ? <a href={r.link} target="_blank" rel="noreferrer">YouTube link</a> : <a href={r.driveLink} target="_blank" rel="noreferrer">{r.source === 'Upload' ? 'uploaded video' : 'video in Drive'}</a>} · {summaryPart(r) ? `part ${fmtT(summaryPart(r).start)} to ${fmtT(summaryPart(r).end)}` : r.durationSec ? `whole video (${fmtT(r.durationSec)})` : 'whole video'} · summary up to {r.maxMinutes || 3} min</small></div>
       <span className="pill">{r.status}</span></div>
     <div className="vbody">
       {locked
         ? <p className="muted">🔒 <b>{r.status}</b>: the backend has taken this one, so it can no longer be changed here.{r.output && <> <a href={r.output} target="_blank" rel="noreferrer">Open the summary video</a></>}</p>
         : <fieldset className="cols">
+          <Trim e={e} setE={setE} />
           <label>Longest summary (minutes)<input type="number" min={SUMMARY_MIN} max={SUMMARY_MAX} step="0.5" value={e.maxMinutes} onChange={up('maxMinutes')} /><small className="hint">The summary will not be longer than this ({SUMMARY_MIN} to {SUMMARY_MAX} min).</small></label>
           <label>Style<select value={e.style || 'highlights'} onChange={up('style')}>{SUMMARY_STYLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
           <label>Summary language<select value={e.language || 'en'} onChange={up('language')}>{LANGS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
@@ -29,7 +31,7 @@ function Item({ r, run, w, reload, ask }) {
         {!locked && r.status === 'Waiting' && <><span className="ok">Started. The backend will pick it up.</span><button className="ghost sm" onClick={() => save({ status: 'Hold' }, 'Putting on Hold…')}>Stop / back to Hold</button></>}
         {!locked && <button className="ghost sm" disabled={bad} onClick={() => save({}, 'Saving…')}>Save settings</button>}
         <button className="ghost sm danger" disabled={locked} onClick={() => ask(r)}>Remove</button></div>
-      {bad && !locked && <p className="bad">Enter a length between {SUMMARY_MIN} and {SUMMARY_MAX} minutes.</p>}
+      {bad && !locked && <p className="bad">Check the summary length ({SUMMARY_MIN} to {SUMMARY_MAX} minutes) and that the end time is after the start time.</p>}
     </div></div>
 }
 
