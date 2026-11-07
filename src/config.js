@@ -292,9 +292,28 @@ export const customVoiceFor = (g, id) => { const v = (g?.my_voices || []).find(x
 // The user adds a YouTube link or a video file. Files live in Drive/Frame AI/Summary-a-Video/. Each one is a row in the \"Summary Queue\" sheet.
 // Hold = not started (the backend must not touch it). Waiting = the user pressed Start. The rest is set by the backend, same as playlist videos.
 export const SUMMARY_SOURCES = ['YouTube', 'Upload', 'Drive']
-export const SUMMARY_COLS = [['#', 'order'], ['Title', 'title'], ['Source', 'source'], ['YouTube Link', 'link'], ['File ID', 'fileId'], ['Drive Link', 'driveLink'], ['Max Minutes', 'maxMinutes'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Style', 'style'], ['Status', 'status'], ['Output Link', 'output'], ['Notes', 'notes'], ['Added', 'added'], ['Updated', 'updated'], ['Start (s)', 'startSec'], ['End (s)', 'endSec'], ['Duration (s)', 'durationSec']]
+export const SUMMARY_COLS = [['#', 'order'], ['Title', 'title'], ['Source', 'source'], ['YouTube Link', 'link'], ['File ID', 'fileId'], ['Drive Link', 'driveLink'], ['Max Minutes', 'maxMinutes'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Style', 'style'], ['Status', 'status'], ['Output Link', 'output'], ['Notes', 'notes'], ['Added', 'added'], ['Updated', 'updated'], ['Start (s)', 'startSec'], ['End (s)', 'endSec'], ['Duration (s)', 'durationSec'], ['Visuals (JSON)', 'visuals']]
 export const SUMMARY_STYLES = [['highlights', 'Highlights: the key moments, in order'], ['story', 'Story: a short narrated retelling'], ['key_points', 'Key points: the main ideas, one by one']]
 export const SUMMARY_MIN = 0.5, SUMMARY_MAX = 60
+// ---- visuals: tells the backend WHAT to show in the summary video ----
+//   clips   = short cuts taken from the source video itself (each min_sec..max_sec long, count 0 = backend decides)
+//   images  = pictures the backend fetches from the web for the topic (free_license_only = only free-to-use pictures)
+//   effects = transitions / motion added on top. Everything off = the chosen part of the video is simply shortened.
+export const VIS_EFFECTS = [['fade', 'Fade in / out'], ['crossfade', 'Cross-dissolve between shots'], ['zoom', 'Slow zoom on images'], ['slide', 'Slide transitions'], ['captions', 'Animated captions']]
+export const VIS_DEFAULT = { clips: { enabled: true, min_sec: 1, max_sec: 10, count: 0 }, images: { enabled: false, count: 0, seconds: 3, free_license_only: true }, effects: { enabled: false, types: [] } }
+export const cleanVisuals = v => {
+  v = v || {}; const c = v.clips || {}, i = v.images || {}, e = v.effects || {}
+  let lo = num(c.min_sec, 1, 0.5, 120), hi = num(c.max_sec, 10, 0.5, 120); if (lo > hi) [lo, hi] = [hi, lo]
+  return {
+    clips: { enabled: c.enabled === undefined ? true : !!c.enabled, min_sec: lo, max_sec: hi, count: Math.round(num(c.count, 0, 0, 500)) },
+    images: { enabled: !!i.enabled, count: Math.round(num(i.count, 0, 0, 500)), seconds: num(i.seconds, 3, 1, 30), free_license_only: i.free_license_only === undefined ? true : !!i.free_license_only },
+    effects: { enabled: !!e.enabled, types: (Array.isArray(e.types) ? e.types : []).filter(t => VIS_EFFECTS.some(x => x[0] === t)) },
+  }
+}
+export const parseVisuals = s => { try { return cleanVisuals(typeof s === 'object' && s ? s : JSON.parse(String(s || '').trim() || '{}')) } catch { return cleanVisuals({}) } }
+export const stringifyVisuals = v => JSON.stringify(cleanVisuals(v))
+export const visualsFor = row => { const v = parseVisuals(row.visuals); return { clips: v.clips.enabled ? { min_sec: v.clips.min_sec, max_sec: v.clips.max_sec, count: v.clips.count || undefined } : null, images: v.images.enabled ? { fetch_from_web: true, count: v.images.count || undefined, seconds_each: v.images.seconds, free_license_only: v.images.free_license_only } : null, effects: v.effects.enabled && v.effects.types.length ? v.effects.types : [] } }
+
 // time helpers: 83 -> "1:23", "1:02:03" or "83" -> seconds
 export const fmtT = s => { s = Math.max(0, Math.round(+s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0') }
 export const parseT = v => { const t = String(v ?? '').trim(); if (!t) return ''; const a = t.split(':').map(Number); if (a.some(n => !Number.isFinite(n) || n < 0) || a.length > 3) return ''; return a.reduce((s, n) => s * 60 + n, 0) }
@@ -308,6 +327,7 @@ export function summaryJob(g, v) {
       max_minutes: minutes, summary_style: v.style || 'highlights', language: v.language || 'en', translate_to: normLangs(v.translateTo),
       tts_models: csv(g.models.tts).join(','), light_models: csv(g.models.light).join(','), medium_models: csv(g.models.medium).join(','), code_models: csv(g.models.code).join(','),
       transcription_models: csv(g.models.transcription).join(','), rpm: +g.limits.rpm, max_wait: +g.limits.max_wait, urdu_font: g.tools.urdu_font, workdir: g.tools.workdir, output_dir: `${g.tools.output_dir}/summary`,
+      visuals: visualsFor(v),
       ...(summaryPart(v) ? { start_sec: summaryPart(v).start, end_sec: summaryPart(v).end } : {}), source_duration_sec: parseFloat(v.durationSec) || undefined,
       summary_folder_id: v.folderId || '',
     },

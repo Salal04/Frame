@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as S from './summary.js'
 import Trim from './SummaryTrim.jsx'
+import Visuals from './SummaryVisuals.jsx'
 import { Fold } from './Blocks.jsx'
 import { Confirm } from './Classic.jsx'
 import { LANGS, TRANSLATE_LANGS, summaryPart, fmtT, normLangs, isLocked, SUMMARY_STYLES, SUMMARY_MIN, SUMMARY_MAX, buildSummaryJobs } from './config.js'
@@ -20,6 +21,7 @@ function Item({ r, run, w, reload, ask }) {
         ? <p className="muted">🔒 <b>{r.status}</b>: the backend has taken this one, so it can no longer be changed here.{r.output && <> <a href={r.output} target="_blank" rel="noreferrer">Open the summary video</a></>}</p>
         : <fieldset className="cols">
           <Trim e={e} setE={setE} />
+          <Visuals e={e} setE={setE} />
           <label>Longest summary (minutes)<input type="number" min={SUMMARY_MIN} max={SUMMARY_MAX} step="0.5" value={e.maxMinutes} onChange={up('maxMinutes')} /><small className="hint">The summary will not be longer than this ({SUMMARY_MIN} to {SUMMARY_MAX} min).</small></label>
           <label>Style<select value={e.style || 'highlights'} onChange={up('style')}>{SUMMARY_STYLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
           <label>Summary language<select value={e.language || 'en'} onChange={up('language')}>{LANGS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
