@@ -199,6 +199,7 @@ export async function init() {
   const singles = await ensureSingles(root.id)
   const social = await ensureSocial(root.id)
   const brand = await ensureBrand(root.id)
+  const summary = await ensureSummaryFolder(root.id)
   const sc = (await adopt('Scene', FOLDER, app.id, root.id)) || await mkFolder('Scene', app.id)
   const ss = await find('Scene Videos', sc.id, SHEET)
   const sceneSheet = ss ? ss.id : await mkSheet('Scene Videos', sc.id, [{ title: 'Scenes', header: SCENE_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
@@ -209,7 +210,7 @@ export async function init() {
     reqSheet = await mkSheet('Requirements', rq.id, [{ title: 'Requirements', header: REQ_HEAD }, { title: 'Log', header: ['Time', 'Action', 'Details'] }])
     await put(reqSheet, 'Requirements!A2:G4', REQ_SEED)
   }
-  return { rootId: root.id, appId: app.id, singles, social, brand, projectsFolderId: pf.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
+  return { rootId: root.id, appId: app.id, singles, social, brand, summary, projectsFolderId: pf.id, projectsSheet, sceneId: sc.id, sceneSheet, reqFolderId: rq.id, reqSheet }
 }
 
 // ---------- Social: accounts, defaults and one schedule file per day. A sibling of Application Config / Projects / Singles. ----------
@@ -217,6 +218,13 @@ async function ensureSocial(root) {
   const f = (await find('Social', root, FOLDER)) || await mkFolder('Social', root)
   const days = await ensureFolder('Days', f.id)
   return { name: 'Social', folderId: f.id, daysId: days.id }
+}
+
+// ---------- Summary-a-Video: long videos (YouTube links or files) waiting to be summarised. A sibling of Social / Projects / Singles. ----------
+// Folder:  Frame AI/Summary-a-Video/   (video files)   +   the sheet "Summary Queue" (one row per source video, see summary.js)
+async function ensureSummaryFolder(root) {
+  const f = (await find('Summary-a-Video', root, FOLDER)) || await mkFolder('Summary-a-Video', root)
+  return { name: 'Summary-a-Video', folderId: f.id }
 }
 
 // ---------- Brand: the global brand kit (logo, profile picture, banner, intro/outro) shared by everything. A sibling of Social / Projects / Singles. ----------
@@ -329,7 +337,7 @@ export async function saveSettings(p, v, s) {
 // ---------- YouTube links (recorded, not downloaded in the browser) ----------
 export const ytId = u => (u.match(/(?:youtu\.be\/|v=|shorts\/|embed\/)([\w-]{11})/) || [])[1]
 async function ytTitle(url) { try { return (await (await fetch(`https://noembed.com/embed?url=${enc(url)}`)).json()).title || null } catch { return null } }
-async function ytInfo(url) {
+export async function ytInfo(url) {
   const id = ytId(url.trim()); if (!id) throw new Error('That is not a valid YouTube link')
   return { id, link: `https://www.youtube.com/watch?v=${id}`, title: (await ytTitle(url)) || `YouTube video ${id}` }
 }

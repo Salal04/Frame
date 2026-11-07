@@ -309,3 +309,10 @@ nav .drop button:hover,.drop a:hover{background:var(--bg)}
 .hm .about{text-align:left;max-width:760px;padding-bottom:10px}.hm .about>h2{text-align:center}.hm .about h3{margin-top:1.2em}.hm .about li{margin:.5em 0}.hm .about ul{padding-left:1.2em}
 .hm .foot{text-align:center;padding:10px 20px 40px}.hm .foot .consent{display:block;color:var(--mute);margin-bottom:6px}
 @media(prefers-reduced-motion:reduce){.bob,.shadow,.blobs i,.spark,.tape .reel,.hm-cta .cta,.hm-welcome,.robot.wave .arm,.robot.wave .mouth{animation:none!important}.rv{opacity:1;transform:none;transition:none}}
+
+/* ---- added: languages, b-roll bar, my voices, summary ---- */
+fieldset.langs{border:0;padding:0;margin:12px 0;grid-column:1/-1}fieldset.langs legend{color:var(--mute);font-weight:500;padding:0}fieldset.langs .chips{gap:6px 22px}fieldset.langs .chk{margin:0}
+.broll .brbox{border:0;padding:0;margin:8px 0 0}.broll .pct{color:var(--bolt);font-size:1.3rem;margin-left:8px}.broll input[type=range]{width:100%;margin:10px 0 2px}
+.broll .scale{display:flex;justify-content:space-between;font-size:.8rem;color:var(--mute)}
+.vlab h4{margin:18px 0 6px}.vlab .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.72rem;word-break:break-all}
+.vlab .vl-in audio{width:100%;margin-top:10px}.vlab blockquote.consent{margin:8px 0;padding:12px 16px;border-radius:16px;background:var(--bg);box-shadow:var(--in);font-size:1.05rem;line-height:1.6}

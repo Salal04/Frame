@@ -1,16 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
 import * as P from './playlist.js'
-import { VOICES, STYLE_PRESETS, PROJECT_FIELDS, GLOBAL_FIELDS, GLOBAL_DEFAULTS, LIST_PATHS, LIST_INFO, SAMPLE, csv, getPath, setPath, ttsNote } from './config.js'
+import { VOICES, TRANSLATE_LANGS, normLangs, isCustomVoice, voiceLabel, STYLE_PRESETS, PROJECT_FIELDS, GLOBAL_FIELDS, GLOBAL_DEFAULTS, LIST_PATHS, LIST_INFO, SAMPLE, csv, getPath, setPath, ttsNote } from './config.js'
 import { previewVoice } from './tts.js'
 import Robot from './Robot.jsx'
 import { connectBackend } from './drive.js'
 import { EnginePicker } from './Engine.jsx'
 import Blocks from './Blocks.jsx'
+import VoiceLab from './VoiceLab.jsx'
 
 // ---------- one generic input: [path, label, type, hint, options] ----------
 function Field({ d, value, onChange }) {
   const [, label, type, hint0, opts] = d, hint = typeof hint0 === 'function' ? hint0(value) : hint0
   if (type === 'bool') return <label className="chk"><input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />{label}</label>
+  if (type === 'langs') { const on = normLangs(value); return <fieldset className="wide langs"><legend>{label}</legend>
+    <div className="chips">{TRANSLATE_LANGS.map(([k, l]) => <label key={k} className="chk"><input type="checkbox" checked={on.includes(k)} onChange={e => onChange(e.target.checked ? [...on, k] : on.filter(x => x !== k))} />{l}</label>)}</div>
+    {hint && <small className="hint">{hint}</small>}</fieldset> }
   if (type === 'textarea') return <label className="wide">{label}<textarea rows={4} value={value ?? ''} onChange={e => onChange(e.target.value)} />{hint && <small className="hint">{hint}</small>}</label>
   return <label>{label}
     {type === 'select'
@@ -22,7 +26,7 @@ function Field({ d, value, onChange }) {
 // ---------- playlist defaults (project_config.json) ----------
 // Small blocks: open one, change it, "Save & next" saves the whole settings file and opens the next block.
 const PS_GROUPS = [
-  ['lang', 'Language and audience', ['language', 'screen_language', 'audience', 'description']],
+  ['lang', 'Language and audience', ['language', 'translate_to', 'screen_language', 'audience', 'description']],
   ['shape', 'Shape and length', ['aspect', 'minutes', 'scene_sec', 'chapter_min', 'max_scenes']],
   ['research', 'Web research', ['web_research']],
   ['quality', 'Quality and repairs', ['quality', 'retries', 'min_steps_per_sentence', 'allow_latex']]]
@@ -42,7 +46,7 @@ export function ProjectSettings({ cfg, save, run, single }) {
 }
 
 // ---------- narrator: one voice + one tone + one TTS model for the whole playlist ----------
-export function Narrator({ cfg, save, g, run }) {
+export function Narrator({ cfg, save, g, run, gl }) {
   const keep = ['voice', 'tts_style', 'tts_engine', 'tts_model', 'tts_strict', 'cloud_voices']
   const [n, setN] = useState(() => Object.fromEntries(keep.map(k => [k, cfg[k]]))), [q, setQ] = useState(''), [url, setUrl] = useState(''), [now, setNow] = useState('')
   const au = useRef(), set = k => v => setN(x => ({ ...x, [k]: v }))
@@ -65,6 +69,10 @@ export function Narrator({ cfg, save, g, run }) {
         <b>{name}</b><span className="tone">{tone}</span><small>{feel}</small>
         <div className="row tight"><button className="ghost sm" onClick={() => hear(name)}>{now === name ? 'Playing…' : 'Hear'}</button><button className={n.voice === name ? 'cta sm' : 'ghost sm'} onClick={() => set('voice')(name)}>{n.voice === name ? 'Chosen' : 'Choose'}</button></div></div>)}
         {!list.length && <p className="muted">No voice matches that.</p>}</div></> },
+    { id: 'myvoice', title: 'My own voice', note: isCustomVoice(n.voice) ? voiceLabel(g, n.voice) : 'not used', body: <>
+      <p className="muted">Narrate this playlist with your own voice instead of a Gemini voice. Choose it below, then press Save.</p>
+      <VoiceLab gl={gl} cfg={cfg} current={n.voice} onUse={set('voice')} run={run} />
+      {isCustomVoice(n.voice) && <p className="hint">Own voices only work with gemini-3.8 TTS models. Pin one in “Speech model” or leave it on Automatic: the backend skips older models for your voice.</p>}</> },
     { id: 'model', title: 'Speech model', note: n.tts_model || 'automatic', body: <>
       <p className="muted">The same voice name sounds slightly different on each model. Pin one so the whole playlist matches.</p>
       <div className="models">

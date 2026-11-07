@@ -25,6 +25,7 @@ export const GLOBAL_DEFAULTS = {
     transcription: ['gemini-3.5-transcribe', 'gemini-3.5-transcribe-live'],
   },
   limits: { rpm: 5, tts_rpm: 4, max_wait: 240, tts_group_scenes: 4, tts_group_chars: 4000, scene_batch: 4 },
+  my_voices: [],                                 // cloned voices: [{ id: 'voice_...', name, model, lang, created }]. Only the ID is kept, never the recordings
   tools: { urdu_font: 'Noto Naskh Arabic', workdir: 'build', output_dir: 'output', tts_cache_dir: 'tts_cache' },
 }
 
@@ -90,9 +91,13 @@ export function estimateRender({ minutes, scene_sec, quality, max_scenes, engine
 }
 
 // ---------------------------------------------------------------- PROJECT (playlist)
-export const LANGS = [['en', 'English'], ['ur', 'Urdu']]
+export const LANGS = [['en', 'English'], ['ur', 'Urdu'], ['hi', 'Hindi'], ['ar', 'Arabic']]
+// English is always the base script. "Also translate into" lets the backend make extra language versions of the same video.
+export const TRANSLATE_LANGS = [['en', 'English'], ['ur', 'Urdu'], ['hi', 'Hindi'], ['ar', 'Arabic']]
+export const RTL_LANGS = ['ur', 'ar']
+export const normLangs = x => { const a = Array.isArray(x) ? x : String(x || '').split(/[,\s]+/); return [...new Set(a.map(v => String(v).trim().toLowerCase()).filter(v => TRANSLATE_LANGS.some(l => l[0] === v)))] }
 export const PROJECT_DEFAULTS = {
-  language: 'en', screen_language: '', aspect: '16:9', description: '', audience: 'curious beginners', minutes: 3,
+  language: 'en', translate_to: [], screen_language: '', aspect: '16:9', description: '', audience: 'curious beginners', minutes: 3,
   voice: 'Kore', tts_style: 'calm, clear and friendly, like a good teacher', tts_engine: 'auto',
   tts_model: '', tts_strict: false, cloud_voices: '',
   engine: 'auto', engine_fixed: false, web_research: true,
@@ -101,6 +106,7 @@ export const PROJECT_DEFAULTS = {
 }
 export const PROJECT_FIELDS = [
   ['language', 'Narration language', 'select', 'Script, voice and audio.', LANGS],
+  ['translate_to', 'Also translate into', 'langs', 'The video is made in the narration language first. Tick more languages and the backend also makes a translated version (script, voice and on-screen text) for each one.'],
   ['screen_language', 'On-screen text language', 'select', '', [['', 'Same as narration'], ...LANGS]],
   ['aspect', 'Default video shape (aspect ratio)', 'select', aspectHint, ASPECTS],
   ['description', 'Default description (added to every video)', 'textarea', "Goes under each video's own description. A video with no description of its own gets just this one."],
@@ -153,7 +159,7 @@ export const STYLE_PRESETS = [
   'calm, clear and friendly, like a good teacher', 'upbeat and energetic, like a favourite YouTube explainer',
   'warm and slow, like a bedtime storyteller', 'serious and steady, like a documentary narrator',
   'gentle and patient, for absolute beginners', 'confident and crisp, like a news anchor']
-export const SAMPLE = { en: 'Hi! Today we will see how a computer learns, one small step at a time.', ur: 'آج ہم آسان الفاظ میں سمجھیں گے کہ کمپیوٹر کیسے سیکھتا ہے۔' }
+export const SAMPLE = { en: 'Hi! Today we will see how a computer learns, one small step at a time.', ur: 'آج ہم آسان الفاظ میں سمجھیں گے کہ کمپیوٹر کیسے سیکھتا ہے۔', hi: 'नमस्ते! आज हम देखेंगे कि कंप्यूटर कैसे सीखता है, एक छोटा कदम एक बार में।', ar: 'مرحباً! سنتعرف اليوم على كيفية تعلّم الحاسوب خطوة صغيرة بعد خطوة.' }
 // Gemini prebuilt voices: [name, tone word from Google's voice list, how it tends to sit in a lesson]
 export const VOICES = [
   ['Zephyr', 'Bright', 'light and cheerful opener'], ['Puck', 'Upbeat', 'lively, keeps kids awake'], ['Charon', 'Informative', 'clear explainer, steady pace'],
@@ -171,8 +177,8 @@ export const ttsNote = m => /lite/.test(m) ? 'Lite: lighter, bigger free daily a
 // ---------------------------------------------------------------- playlist sheet (header name -> field)
 export const PLAYLIST_COLS = [
   ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Source Mode', 'sourceMode'], ['Custom Instruction', 'instruction'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
-  ['Audience', 'audience'], ['Language', 'language'], ['Screen Language', 'screen_language'], ['Aspect', 'aspect'], ['Voice', 'voice'], ['Engine', 'engine'], ['Engine Fixed', 'engineFixed'], ['Web Research', 'webResearch'],
-  ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Custom Clips (JSON)', 'clips'], ['Scenes (JSON)', 'scenes'], ['Extra Config (JSON)', 'extra'],
+  ['Audience', 'audience'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Screen Language', 'screen_language'], ['Aspect', 'aspect'], ['Voice', 'voice'], ['Engine', 'engine'], ['Engine Fixed', 'engineFixed'], ['Web Research', 'webResearch'],
+  ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Custom Clips (JSON)', 'clips'], ['B-roll (JSON)', 'broll'], ['Scenes (JSON)', 'scenes'], ['Extra Config (JSON)', 'extra'],
   ['Output Link', 'output'], ['Video Folder ID', 'folderId'], ['Input Folder ID', 'inputFolderId'], ['Output Folder ID', 'outputFolderId'], ['Video Folder Link', 'folderLink'], ['Notes', 'notes'], ['Updated', 'updated']]
 
 // ---------------------------------------------------------------- uploading a sheet into the Playlist sheet
@@ -243,6 +249,69 @@ export const clipsFor = v => parseClips(v.clips).map((c, i) => ({
   order: i + 1, name: c.name, type: c.kind, file_id: c.fileId, url: c.url,
   start_sec: c.start, duration_sec: c.duration, position: c.position, width_pct: c.width, opacity_pct: c.opacity, loop: c.loop, mute: c.mute, note: c.note,
 }))
+
+// ---------------------------------------------------------------- B-ROLL (video level only)
+// The user's OWN face video, lip-synced to the narration by the backend and cut in as b-roll.
+// \"percent\" = how much of the final video should show the user's face (the bar). 0 = off. Saved on the video's row (column \"B-roll (JSON)\").
+// The face videos sit in the video's Drive folder: <video>/Input/broll/.
+export const MAX_BROLL_FILES = 5
+export const BROLL_DEFAULT = { enabled: false, percent: 30, segments: 0, files: [], lipSync: true }
+export const cleanBroll = b => {
+  b = b || {}
+  return {
+    enabled: !!b.enabled, percent: num(b.percent, 30, 0, 100), segments: Math.round(num(b.segments, 0, 0, 200)),   // 0 segments = the backend decides
+    lipSync: b.lipSync === undefined ? true : !!b.lipSync,
+    files: (Array.isArray(b.files) ? b.files : []).filter(f => f && (f.fileId || f.url)).slice(0, MAX_BROLL_FILES)
+      .map(f => ({ name: String(f.name || '').slice(0, 120), fileId: String(f.fileId || ''), url: String(f.url || '') })),
+  }
+}
+export const parseBroll = s => { try { return cleanBroll(typeof s === 'object' && s ? s : JSON.parse(String(s || '').trim() || '{}')) } catch { return cleanBroll({}) } }
+export const stringifyBroll = b => { const c = cleanBroll(b); return c.enabled || c.files.length ? JSON.stringify(c) : '' }   // off and empty = empty cell
+// What the backend receives as config.broll. Off (or no face video yet) = the key is left out.
+export const brollFor = v => {
+  const b = parseBroll(v.broll)
+  return b.enabled && b.files.length && b.percent > 0
+    ? { enabled: true, mode: 'own_face_lipsync', lip_sync: b.lipSync, percent: b.percent, segments: b.segments || undefined, files: b.files.map((f, i) => ({ order: i + 1, name: f.name, file_id: f.fileId, url: f.url })) }
+    : undefined
+}
+
+// ---------------------------------------------------------------- MY VOICES (a cloned voice made with Gemini voice replication)
+// A custom voice is only an ID (voice_...) that Gemini keeps in the user's Gemini project. The recordings are NOT stored by Frame.
+// The list lives in the global config (frame_config.json) so every playlist can use it.
+export const isCustomVoice = v => /^voice(key)?_/.test(String(v || ''))
+export const CUSTOM_VOICE_MODELS = m => /3\.8.*tts/.test(m)   // voice replication is supported by the 3.8 TTS models only
+export const CONSENT = {
+  'en-US': ['English', 'I am the owner of this voice and I consent to Google using this voice to create a synthetic voice model.'],
+  'hi-IN': ['Hindi', 'मैं इस आवाज का मालिक हूं और मैं सिंथेटिक आवाज मॉडल बनाने के लिए Google को इस आवाज का उपयोग करने की सहमति देता हूं'],
+  'ar-XA': ['Arabic', 'أنا مالك هذا الصوت وأوافق على أن تستخدم Google هذا الصوت لإنشاء نموذج صوتي اصطناعي.'],
+}   // Urdu is not a supported consent language: an Urdu speaker records the English or Hindi sentence. The narration itself can still be Urdu.
+export const voiceLabel = (g, id) => (g?.my_voices || []).find(v => v.id === id)?.name || id
+export const customVoiceFor = (g, id) => { const v = (g?.my_voices || []).find(x => x.id === id); return v ? { id: v.id, name: v.name, model: v.model || '', type: 'replicated' } : isCustomVoice(id) ? { id, name: id, model: '', type: 'replicated' } : undefined }
+
+// ---------------------------------------------------------------- SUMMARY VIDEOS (a long video in, a short summary video out)
+// The user adds a YouTube link or a video file. Files live in Drive/Frame AI/Summary-a-Video/. Each one is a row in the \"Summary Queue\" sheet.
+// Hold = not started (the backend must not touch it). Waiting = the user pressed Start. The rest is set by the backend, same as playlist videos.
+export const SUMMARY_SOURCES = ['YouTube', 'Upload', 'Drive']
+export const SUMMARY_COLS = [['#', 'order'], ['Title', 'title'], ['Source', 'source'], ['YouTube Link', 'link'], ['File ID', 'fileId'], ['Drive Link', 'driveLink'], ['Max Minutes', 'maxMinutes'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Style', 'style'], ['Status', 'status'], ['Output Link', 'output'], ['Notes', 'notes'], ['Added', 'added'], ['Updated', 'updated']]
+export const SUMMARY_STYLES = [['highlights', 'Highlights: the key moments, in order'], ['story', 'Story: a short narrated retelling'], ['key_points', 'Key points: the main ideas, one by one']]
+export const SUMMARY_MIN = 0.5, SUMMARY_MAX = 60
+export const normSummaryStatus = s => normStatus(s)
+export function summaryJob(g, v) {
+  const minutes = num(v.maxMinutes, 3, SUMMARY_MIN, SUMMARY_MAX)
+  return {
+    row: v.row, title: v.title, config: {
+      task: 'summary_video', title: v.title, source: v.source === 'YouTube' ? 'youtube' : 'drive_file', youtube_url: v.source === 'YouTube' ? v.link : '', file_id: v.fileId || '', drive_link: v.driveLink || '',
+      max_minutes: minutes, summary_style: v.style || 'highlights', language: v.language || 'en', translate_to: normLangs(v.translateTo),
+      tts_models: csv(g.models.tts).join(','), light_models: csv(g.models.light).join(','), medium_models: csv(g.models.medium).join(','), code_models: csv(g.models.code).join(','),
+      transcription_models: csv(g.models.transcription).join(','), rpm: +g.limits.rpm, max_wait: +g.limits.max_wait, urdu_font: g.tools.urdu_font, workdir: g.tools.workdir, output_dir: `${g.tools.output_dir}/summary`,
+      summary_folder_id: v.folderId || '',
+    },
+  }
+}
+export function buildSummaryJobs(g, rows, all = false) {
+  const gem = csv(g.keys.gemini), tts = csv(g.keys.tts).length ? csv(g.keys.tts) : gem
+  return { task: 'summary_video', exported: new Date().toISOString(), keys: { gemini: gem, tts, cloudTts: csv(g.keys.cloudTts) }, tts_cache_dir: g.tools.tts_cache_dir, jobs: rows.filter(r => all || r.status === 'Waiting').map(r => summaryJob(g, r)) }
+}
 
 // ---------------------------------------------------------------- SCENES (video level only)
 // The user describes the scenes of ONE video (typed, pasted or from a .txt file). Every scene is then either
@@ -337,21 +406,22 @@ export function resolveJob(g, p, v, playlist) {
     source_text: isSource ? (v.script || '').trim() : '', source_mode: isSource ? sm : '',
     custom_instruction: (isSource || kind === 'Prompt') ? (v.instruction || '').trim() : '',
     topic: (v.topic || v.title || '').trim(), minutes: +v.minutes || (isScript || (isSource && (sm === 'polish' || sm === 'rewrite')) ? '' : +p.minutes || 3), audience: v.audience || p.audience,
-    language: v.language || p.language, screen_language: v.screen_language || p.screen_language,
+    language: v.language || p.language, translate_to: normLangs(v.translateTo).length ? normLangs(v.translateTo) : normLangs(p.translate_to), screen_language: v.screen_language || p.screen_language,
     aspect: normAspect(v.aspect) || normAspect(p.aspect) || '16:9',   // row > project > built-in 16:9
-    voice: v.voice || p.voice, tts_style: p.tts_style, tts_engine: p.tts_engine, cloud_voices: p.cloud_voices,
-    light_models: csv(g.models.light).join(','), medium_models: csv(g.models.medium).join(','), code_models: csv(g.models.code).join(','), tts_models: tts.join(','),
+    voice: v.voice || p.voice, custom_voice: customVoiceFor(g, v.voice || p.voice), tts_style: p.tts_style, tts_engine: p.tts_engine, cloud_voices: p.cloud_voices,
+    light_models: csv(g.models.light).join(','), medium_models: csv(g.models.medium).join(','), code_models: csv(g.models.code).join(','), tts_models: (isCustomVoice(v.voice || p.voice) ? tts.filter(CUSTOM_VOICE_MODELS) : tts).join(','),
     rpm: +g.limits.rpm, tts_rpm: +g.limits.tts_rpm, max_wait: +g.limits.max_wait, tts_group_scenes: +g.limits.tts_group_scenes, tts_group_chars: +g.limits.tts_group_chars, scene_batch: +g.limits.scene_batch,
     scene_sec: +p.scene_sec, chapter_min: +p.chapter_min, min_steps_per_sentence: +p.min_steps_per_sentence, max_scenes: +p.max_scenes,
     quality: p.quality, retries: +p.retries, allow_latex: !!p.allow_latex, web_research: research,
     engine, engine_fixed: fixed, engine_fallback: !fixed && engine !== 'auto',   // fixed = never swap engines; fallback = may retry a failed scene with the other engine
     urdu_font: g.tools.urdu_font, workdir: g.tools.workdir, output_dir: `${g.tools.output_dir}/${slug(playlist)}`,
     // this video's own Drive folder: read the input from input_folder_id, write every output file into output_folder_id
+    broll: brollFor(v),          // this video's own face video + how much of the video it fills (never inherited)
     custom_clips: clipsFor(v),   // this video's own overlay clips (never inherited from project / global); backend downloads each file_id
     custom_scenes: scenesFor(v), // this video's own scene list (description, or the user's own Manim / Remotion file per scene); never inherited
     video_folder_id: v.folderId || '', input_folder_id: v.inputFolderId || '', output_folder_id: v.outputFolderId || '', video_folder_link: v.folderLink || '',
   }
-  Object.keys(cfg).forEach(k => (cfg[k] === '' || (Array.isArray(cfg[k]) && !cfg[k].length && (k === 'custom_clips' || k === 'custom_scenes'))) && delete cfg[k])   // empty = let config.py use its own default
+  Object.keys(cfg).forEach(k => (cfg[k] === '' || (Array.isArray(cfg[k]) && !cfg[k].length && (k === 'custom_clips' || k === 'custom_scenes' || k === 'translate_to')) || cfg[k] === undefined) && delete cfg[k])   // empty = let config.py use its own default
   return { ...cfg, ...extra }
 }
 

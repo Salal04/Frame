@@ -25,9 +25,9 @@ const STARTER = {
 - Pure narration only, exactly as it will be spoken aloud.
 - Plain text: no markdown, no timestamps, no stage directions, no sound cues, no speaker labels, no notes, no title line.
 - Short, clear sentences written to be heard, not read.
-- Length: about 150 words per minute for English, about 130 words per minute for Urdu.
+- Length: about 150 words per minute for English, about 130 words per minute for Urdu, about 120 for Hindi, about 110 for Arabic.
 - Structure: strong hook, explanation in logical order, one example or analogy, short recap at the end.
-- Urdu narration must be written in Urdu script. Keep technical terms consistent.
+- Urdu narration must be written in Urdu script, Hindi in Devanagari, Arabic in Arabic script (with full diacritics only where meaning needs it). Keep technical terms consistent.
 - Must be under 49,000 characters.
 - Be factually accurate. Do not invent facts, numbers or dates; keep unsure parts general.
 

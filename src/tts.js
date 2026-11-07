@@ -9,17 +9,19 @@ function wavUrl(b64, rate = 24000) {   // Gemini returns raw 16-bit mono PCM at 
 
 export async function previewVoice({ key, models, voice, style, text }) {
   let last
+  const custom = /^voice(key)?_/.test(voice)   // a voice you made yourself (see voiceClone.js): only the 3.8 TTS models know it
+  if (custom) models = models.filter(m => /3\.8.*tts/.test(m))
   for (const m of models) {
     try {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({ contents: [{ parts: [{ text: `Say this in a ${style} voice: ${text}` }] }],
-          generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } } }) })
+          generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: custom ? { voice } : { prebuiltVoiceConfig: { voiceName: voice } } } } }) })
       if (!r.ok) { last = new Error(`${m}: ${(await r.text()).slice(0, 160)}`); continue }
       const b64 = (await r.json()).candidates?.[0]?.content?.parts?.find(x => x.inlineData)?.inlineData?.data
       if (b64) return wavUrl(b64)
       last = new Error(`${m}: no audio came back`)
     } catch (e) { last = e }
   }
-  throw last || new Error('No TTS model is listed in the Control room')
+  throw last || new Error(custom ? 'Your own voice needs a gemini-3.8 TTS model in the Control room list.' : 'No TTS model is listed in the Control room')
 }

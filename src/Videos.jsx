@@ -6,6 +6,8 @@ import { STATUSES, isLocked, VOICES, LANGS, ASPECTS, MAX_SCRIPT, MAX_INSTRUCTION
 import { Confirm } from './Classic.jsx'
 import { EnginePicker, enginePhrase } from './Engine.jsx'
 import Clips from './Clips.jsx'
+import Broll from './Broll.jsx'
+import { TRANSLATE_LANGS, normLangs, parseBroll } from './config.js'
 import { useVideoList, rowGet } from './ListTools.jsx'
 import Scenes, { SceneDraft, sceneNote } from './Scenes.jsx'
 import { engineLabel, estimateRender, normEngine, parseSceneText, stringifyScenes } from './config.js'
@@ -29,10 +31,11 @@ function SourceOptions({ mode, instruction, onMode, onInstruction }) {
   </div></Fold>
 }
 
-function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, setUi }) {
+function Row({ r, g, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, setUi }) {
   const [e, setE] = useState(r), open = !!ui.rowOpen, setOpen = v => setUi(x => ({ ...x, rowOpen: v })), tf = useRef(), sf = useRef(), up = k => ev => setE({ ...e, [k]: ev.target.value })
   const save = () => run('Saving video…', async () => {
     scenesTooBig(e.scenes)
+    { const b = parseBroll(e.broll); if (b.enabled && b.percent > 0 && !b.files.length) throw new Error('B-roll is on, but no face video of you is uploaded yet. Upload one, or switch b-roll off.') }
     if (e.inputType === 'Script') { if (!(e.script || '').trim()) throw new Error('This video is set to Script, but the script is empty.'); tooLong(e.script) }
     if (e.inputType === 'Source') { const sm = normSourceMode(e.sourceMode); if (sm === 'custom' ? !(e.instruction || '').trim() : !(e.script || '').trim()) throw new Error(sm === 'custom' ? 'Custom mode needs an instruction.' : 'This video is set to Source text, but the text is empty.'); tooLong(e.script) }
     await P.saveVideo(p, { ...e, sourceMode: e.inputType === 'Source' ? normSourceMode(e.sourceMode) : '' }); await reload(); return true })
@@ -75,9 +78,11 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, set
       <div className="cols"><label>Minutes<input type="number" min="0.5" step="0.5" value={e.minutes} placeholder={e.inputType === 'Script' || (e.inputType === 'Source' && ['polish', 'rewrite'].includes(normSourceMode(e.sourceMode))) ? 'from text' : cfg.minutes} onChange={up('minutes')} /></label>
         <label>Audience<input value={e.audience} placeholder={cfg.audience} onChange={up('audience')} /></label>
         <label>Narration language<select value={e.language} onChange={up('language')}>{[...inherit(), ...LANGS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+        <fieldset className="langs wide"><legend>Also translate into</legend><div className="chips">{TRANSLATE_LANGS.map(([k, l]) => <label key={k} className="chk"><input type="checkbox" checked={normLangs(e.translateTo).includes(k)} onChange={ev => { const on = normLangs(e.translateTo); setE({ ...e, translateTo: (ev.target.checked ? [...on, k] : on.filter(x => x !== k)).join(',') }) }} />{l}</label>)}</div>
+          <small className="hint">{normLangs(e.translateTo).length ? 'Extra versions of this video are made in the ticked languages.' : `Empty = playlist default${normLangs(cfg.translate_to).length ? ` (${normLangs(cfg.translate_to).join(', ')})` : ' (no translation)'}. English is the base script.`}</small></fieldset>
         <label>Screen language<select value={e.screen_language} onChange={up('screen_language')}>{[...inherit(), ...LANGS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <label>Aspect<select value={e.aspect} onChange={up('aspect')}>{[...inherit(`Project default (${normAspect(cfg.aspect) || '16:9'})`), ...ASPECTS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">{aspectHint(e.aspect || cfg.aspect || '16:9')}</small></label>
-        <label>Voice<select value={e.voice} onChange={up('voice')}>{[...inherit('Playlist narrator'), ...VOICES.map(v => [v[0], `${v[0]} · ${v[1]}`])].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label></div>
+        <label>Voice<select value={e.voice} onChange={up('voice')}>{[...inherit('Playlist narrator'), ...(g.my_voices || []).map(v => [v.id, `★ ${v.name} (my voice)`]), ...VOICES.map(v => [v[0], `${v[0]} · ${v[1]}`])].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label></div>
         </> },
         { id: 'engine', title: 'Engine and extra config', body: <>
       <EnginePicker engine={e.engine} fixed={e.engineFixed} inherit={engineLabel(cfg.engine || 'auto')}
@@ -88,6 +93,9 @@ function Row({ r, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, set
         </> },
         { id: 'clips', title: 'Clips', note: 'uploads save by themselves', noSave: true, body: <>
       <Clips e={e} setE={setE} p={p} run={run} reload={reload} locked={isLocked(r.status)} />
+        </> },
+        { id: 'broll', title: 'B-roll (my face)', note: parseBroll(e.broll).enabled ? `${parseBroll(e.broll).percent}% of the video` : 'off', noSave: true, body: <>
+      <Broll e={e} setE={setE} p={p} run={run} reload={reload} locked={isLocked(r.status)} voice={e.voice || cfg.voice} />
         </> },
         { id: 'notes', title: 'Notes and thumbnail', body: <>
       <label>Notes<textarea rows={2} value={e.notes} onChange={up('notes')} /></label>
@@ -186,7 +194,7 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
     <div className="cards one">{!rows.length && <p className="muted">No videos yet. Add the first prompt or script above, upload a sheet, or type rows straight into the Playlist sheet.</p>}
       {bar}
       {rows.length > 0 && !shown.length && <p className="muted">No video matches the search or filter. Press Reset above.</p>}
-      {shown.map(r => <Row key={[r.row, r.title, r.status, r.thumbLink].join('|')} ui={ui[r.row] || {}} setUi={f => setUi(u => ({ ...u, [r.row]: f(u[r.row] || {}) }))} single={single} r={r} cfg={cfg} p={p} run={run} reload={reload} gotoThumb={gotoThumb} gotoEdit={gotoEdit} ask={setDel} />)}</div>
+      {shown.map(r => <Row g={g} key={[r.row, r.title, r.status, r.thumbLink].join('|')} ui={ui[r.row] || {}} setUi={f => setUi(u => ({ ...u, [r.row]: f(u[r.row] || {}) }))} single={single} r={r} cfg={cfg} p={p} run={run} reload={reload} gotoThumb={gotoThumb} gotoEdit={gotoEdit} ask={setDel} />)}</div>
     {del && <Confirm title={`Remove “${del.title}”?`} text="The row is deleted from the Playlist sheet. The video's Drive folder (Input / Output) stays." yes="Remove" onYes={() => run('Removing…', async () => { await P.deleteVideo(p, del); setDel(null); await reload() })} onNo={() => setDel(null)} />}
   </section>
 }
