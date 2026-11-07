@@ -6,7 +6,7 @@ import Robot from './Robot.jsx'
 import { connectBackend } from './drive.js'
 import { EnginePicker } from './Engine.jsx'
 import Blocks from './Blocks.jsx'
-import VoiceLab from './VoiceLab.jsx'
+import { VoicePicker } from './VoiceLab.jsx'
 
 // ---------- one generic input: [path, label, type, hint, options] ----------
 function Field({ d, value, onChange }) {
@@ -46,7 +46,7 @@ export function ProjectSettings({ cfg, save, run, single }) {
 }
 
 // ---------- narrator: one voice + one tone + one TTS model for the whole playlist ----------
-export function Narrator({ cfg, save, g, run, gl }) {
+export function Narrator({ cfg, save, g, run, onVoices }) {
   const keep = ['voice', 'tts_style', 'tts_engine', 'tts_model', 'tts_strict', 'cloud_voices']
   const [n, setN] = useState(() => Object.fromEntries(keep.map(k => [k, cfg[k]]))), [q, setQ] = useState(''), [url, setUrl] = useState(''), [now, setNow] = useState('')
   const au = useRef(), set = k => v => setN(x => ({ ...x, [k]: v }))
@@ -70,8 +70,8 @@ export function Narrator({ cfg, save, g, run, gl }) {
         <div className="row tight"><button className="ghost sm" onClick={() => hear(name)}>{now === name ? 'Playing…' : 'Hear'}</button><button className={n.voice === name ? 'cta sm' : 'ghost sm'} onClick={() => set('voice')(name)}>{n.voice === name ? 'Chosen' : 'Choose'}</button></div></div>)}
         {!list.length && <p className="muted">No voice matches that.</p>}</div></> },
     { id: 'myvoice', title: 'My own voice', note: isCustomVoice(n.voice) ? voiceLabel(g, n.voice) : 'not used', body: <>
-      <p className="muted">Narrate this playlist with your own voice instead of a Gemini voice. Choose it below, then press Save.</p>
-      <VoiceLab gl={gl} cfg={cfg} current={n.voice} onUse={set('voice')} run={run} />
+      <p className="muted">Narrate this playlist with a voice of your own. Your voices are made once on the <b>My voices</b> page; here you only choose one, then press Save.</p>
+      <VoicePicker g={g} cfg={cfg} current={n.voice} onUse={set('voice')} onMake={onVoices} run={run} />
       {isCustomVoice(n.voice) && <p className="hint">Own voices only work with gemini-3.8 TTS models. Pin one in “Speech model” or leave it on Automatic: the backend skips older models for your voice.</p>}</> },
     { id: 'model', title: 'Speech model', note: n.tts_model || 'automatic', body: <>
       <p className="muted">The same voice name sounds slightly different on each model. Pin one so the whole playlist matches.</p>

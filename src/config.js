@@ -295,24 +295,43 @@ export const SUMMARY_SOURCES = ['YouTube', 'Upload', 'Drive']
 export const SUMMARY_COLS = [['#', 'order'], ['Title', 'title'], ['Source', 'source'], ['YouTube Link', 'link'], ['File ID', 'fileId'], ['Drive Link', 'driveLink'], ['Max Minutes', 'maxMinutes'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Style', 'style'], ['Status', 'status'], ['Output Link', 'output'], ['Notes', 'notes'], ['Added', 'added'], ['Updated', 'updated'], ['Start (s)', 'startSec'], ['End (s)', 'endSec'], ['Duration (s)', 'durationSec'], ['Visuals (JSON)', 'visuals']]
 export const SUMMARY_STYLES = [['highlights', 'Highlights: the key moments, in order'], ['story', 'Story: a short narrated retelling'], ['key_points', 'Key points: the main ideas, one by one']]
 export const SUMMARY_MIN = 0.5, SUMMARY_MAX = 60
-// ---- visuals: tells the backend WHAT to show in the summary video ----
-//   clips   = short cuts taken from the source video itself (each min_sec..max_sec long, count 0 = backend decides)
-//   images  = pictures the backend fetches from the web for the topic (free_license_only = only free-to-use pictures)
-//   effects = transitions / motion added on top. Everything off = the chosen part of the video is simply shortened.
+// ---- visuals: tells the backend WHAT to show in the summary video. Everything comes from the source video or from Frame itself, nothing from the web. ----
+//   clips    = short cuts of the source video (each min_sec..max_sec long, count 0 = backend decides)
+//   images   = still pictures (frames) taken out of the source video, each shown seconds long
+//   remotion = scenes drawn by Frame's own Remotion engine (titles, diagrams, animated text). OFF by default
+//   mix      = when two or more are on: how the summary is shared between them (percent, always adds up to 100)
+//   effects  = transitions / motion on top
+export const VIS_SOURCES = [['clips', 'Short clips from the video'], ['images', 'Pictures taken from the video'], ['remotion', "Frame's own animated scenes (Remotion engine)"]]
 export const VIS_EFFECTS = [['fade', 'Fade in / out'], ['crossfade', 'Cross-dissolve between shots'], ['zoom', 'Slow zoom on images'], ['slide', 'Slide transitions'], ['captions', 'Animated captions']]
-export const VIS_DEFAULT = { clips: { enabled: true, min_sec: 1, max_sec: 10, count: 0 }, images: { enabled: false, count: 0, seconds: 3, free_license_only: true }, effects: { enabled: false, types: [] } }
 export const cleanVisuals = v => {
-  v = v || {}; const c = v.clips || {}, i = v.images || {}, e = v.effects || {}
+  v = v || {}; const c = v.clips || {}, i = v.images || {}, r = v.remotion || {}, e = v.effects || {}
   let lo = num(c.min_sec, 1, 0.5, 120), hi = num(c.max_sec, 10, 0.5, 120); if (lo > hi) [lo, hi] = [hi, lo]
   return {
-    clips: { enabled: c.enabled === undefined ? true : !!c.enabled, min_sec: lo, max_sec: hi, count: Math.round(num(c.count, 0, 0, 500)) },
-    images: { enabled: !!i.enabled, count: Math.round(num(i.count, 0, 0, 500)), seconds: num(i.seconds, 3, 1, 30), free_license_only: i.free_license_only === undefined ? true : !!i.free_license_only },
+    clips: { enabled: c.enabled === undefined ? true : !!c.enabled, min_sec: lo, max_sec: hi, count: Math.round(num(c.count, 0, 0, 500)), weight: num(c.weight, 50, 0, 100) },
+    images: { enabled: !!i.enabled, count: Math.round(num(i.count, 0, 0, 500)), seconds: num(i.seconds, 3, 1, 30), weight: num(i.weight, 50, 0, 100) },
+    remotion: { enabled: !!r.enabled, weight: num(r.weight, 30, 0, 100) },   // off unless the user turns it on
     effects: { enabled: !!e.enabled, types: (Array.isArray(e.types) ? e.types : []).filter(t => VIS_EFFECTS.some(x => x[0] === t)) },
   }
 }
 export const parseVisuals = s => { try { return cleanVisuals(typeof s === 'object' && s ? s : JSON.parse(String(s || '').trim() || '{}')) } catch { return cleanVisuals({}) } }
 export const stringifyVisuals = v => JSON.stringify(cleanVisuals(v))
-export const visualsFor = row => { const v = parseVisuals(row.visuals); return { clips: v.clips.enabled ? { min_sec: v.clips.min_sec, max_sec: v.clips.max_sec, count: v.clips.count || undefined } : null, images: v.images.enabled ? { fetch_from_web: true, count: v.images.count || undefined, seconds_each: v.images.seconds, free_license_only: v.images.free_license_only } : null, effects: v.effects.enabled && v.effects.types.length ? v.effects.types : [] } }
+// whole-number percentages of the sources that are on; they always add up to 100 (all weights 0 = equal split)
+export function visualMix(v) {
+  const on = VIS_SOURCES.map(s => s[0]).filter(k => v[k].enabled); if (!on.length) return {}
+  const sum = on.reduce((a, k) => a + v[k].weight, 0), out = {}; let used = 0
+  on.forEach((k, j) => { out[k] = j === on.length - 1 ? 100 - used : Math.round((sum ? v[k].weight / sum : 1 / on.length) * 100); used += out[k] })
+  return out
+}
+export const visualsFor = row => {
+  const v = parseVisuals(row.visuals), mix = visualMix(v)
+  return {
+    clips: v.clips.enabled ? { min_sec: v.clips.min_sec, max_sec: v.clips.max_sec, count: v.clips.count || undefined } : null,
+    images: v.images.enabled ? { from_video: true, count: v.images.count || undefined, seconds_each: v.images.seconds } : null,
+    remotion: v.remotion.enabled ? { engine: 'remotion' } : null,
+    mix: Object.keys(mix).length ? { clips_pct: mix.clips || 0, images_pct: mix.images || 0, remotion_pct: mix.remotion || 0 } : undefined,
+    effects: v.effects.enabled && v.effects.types.length ? v.effects.types : [],
+  }
+}
 
 // time helpers: 83 -> "1:23", "1:02:03" or "83" -> seconds
 export const fmtT = s => { s = Math.max(0, Math.round(+s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0') }

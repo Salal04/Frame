@@ -13,6 +13,7 @@ import Home from './Home.jsx'
 import Guide from './Guide.jsx'
 import Prompts from './Prompts.jsx'
 import Summary from './Summary.jsx'
+import Voices from './Voices.jsx'
 import { pushDraft, clearDraft } from './draft.js'
 
 
@@ -49,11 +50,12 @@ export default function App() {
     {busy && <div className="bar"><span />{busy}</div>}
     {err && <div className="err" role="alert" onClick={() => setErr('')}>{err}</div>}
     {view.t === 'home' && <Playlists w={w} run={run} open={p => setView({ t: 'playlist', p })} />}
-    {view.t === 'playlist' && <Playlist key={view.p.folderId} w={w} p={view.p} run={run} back={() => setView({ t: 'home' })} onEdit={(p, r) => setView({ t: 'editor', p, r })} />}
-    {view.t === 'singles' && <Playlist key="singles" w={w} p={w.singles} single run={run} onEdit={(p, r) => setView({ t: 'editor', p, r })} />}
+    {view.t === 'playlist' && <Playlist key={view.p.folderId} w={w} p={view.p} run={run} back={() => setView({ t: 'home' })} onEdit={(p, r) => setView({ t: 'editor', p, r })} onVoices={() => setView({ t: 'voices' })} />}
+    {view.t === 'singles' && <Playlist key="singles" w={w} p={w.singles} single run={run} onEdit={(p, r) => setView({ t: 'editor', p, r })} onVoices={() => setView({ t: 'voices' })} />}
     {view.t === 'editor' && <Editor key={view.r ? view.r.row + view.p.folderId : 'new'} w={w} run={run} start={view.r ? { p: view.p, r: view.r } : null} onSocial={key => setView({ t: 'social', pick: key })} />}
     {view.t === 'production' && <Production w={w} run={run} />}
     {view.t === 'summary' && <Summary w={w} run={run} />}
+    {view.t === 'voices' && <Voices w={w} run={run} />}
     {view.t === 'social' && <Social key={view.pick || 'social'} w={w} run={run} pick={view.pick} />}
     {view.t === 'brand' && <Brand w={w} run={run} />}
     {view.t === 'control' && <ControlRoom g={w.g} run={run} />}
@@ -68,7 +70,7 @@ export default function App() {
 // Main pages stay inline on desktop; everything else lives in the "More" dropdown.
 // On phones the inline links hide and one dropdown button (showing the current page) holds every page.
 const PRIMARY = [['home', 'Playlists'], ['singles', 'Singles'], ['production', 'Production'], ['summary', 'Summary'], ['editor', 'Editor'], ['social', 'Social']]
-const MORE = [['brand', 'Brand'], ['control', 'Control room'], ['reqs', 'Requirements'], ['scenes', 'Scenes'], ['prompts', 'Prompts'], ['guide', 'Guide']]
+const MORE = [['voices', 'My voices'], ['brand', 'Brand'], ['control', 'Control room'], ['reqs', 'Requirements'], ['scenes', 'Scenes'], ['prompts', 'Prompts'], ['guide', 'Guide']]
 
 function TopBar({ here, go, busy, rootId, onOut }) {
   const [open, setOpen] = useState(false), box = useRef(null)
@@ -126,7 +128,7 @@ function Playlists({ w, run, open }) {
   </main>
 }
 
-function Playlist({ w, p, run, back, single, onEdit }) {
+function Playlist({ w, p, run, back, single, onEdit, onVoices }) {
   const [tab, setTab] = useState('videos'), [cfg, setCfg] = useState(null), [rows, setRows] = useState(null), [focus, setFocus] = useState('')
   useEffect(() => { run('Opening playlist…', async () => { const c = await P.loadProject(p); setRows(await P.loadVideos(p)); setCfg(c) }) }, [])
   const save = async next => { await P.saveProject(p, next); setCfg(next) }
@@ -135,7 +137,7 @@ function Playlist({ w, p, run, back, single, onEdit }) {
     {cfg && rows && <>
       <div className="seg tabs">{tabs.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
       {tab === 'videos' && <Videos single={single} p={p} g={w.g.cfg} cfg={cfg} name={p.name} rows={rows} setRows={setRows} run={run} gotoThumb={r => { setFocus(r); setTab('thumb') }} gotoEdit={r => onEdit(p, r)} />}
-      {tab === 'narrator' && <Narrator cfg={cfg} save={save} g={w.g.cfg} gl={w.g} run={run} />}
+      {tab === 'narrator' && <Narrator cfg={cfg} save={save} g={w.g.cfg} run={run} onVoices={onVoices} />}
       {tab === 'thumb' && <ThumbStudio focus={focus} p={p} cfg={cfg} save={save} rows={rows} setRows={setRows} run={run} />}
       {tab === 'settings' && <ProjectSettings single={single} cfg={cfg} save={save} run={run} />}
       {tab === 'assets' && <GlobalAssets p={p} run={run} />}

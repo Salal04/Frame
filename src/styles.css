@@ -318,3 +318,5 @@ fieldset.langs{border:0;padding:0;margin:12px 0;grid-column:1/-1}fieldset.langs 
 .vlab .vl-in audio{width:100%;margin-top:10px}.vlab blockquote.consent{margin:8px 0;padding:12px 16px;border-radius:16px;background:var(--bg);box-shadow:var(--in);font-size:1.05rem;line-height:1.6}
 .trim .player{position:relative;width:100%;aspect-ratio:16/9;border-radius:18px;overflow:hidden;background:#000;margin:8px 0}.trim .player iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 .trim .trimbox{border:0;padding:0;margin:8px 0}.trim .dual{display:grid;grid-template-columns:1fr 1fr;gap:6px 22px}.trim .dual input[type=range]{width:100%}@media(max-width:760px){.trim .dual{grid-template-columns:1fr}}
+.vis .mix{margin:10px 0}.vis .mixbar{display:flex;height:34px;border-radius:12px;overflow:hidden;margin:6px 0 10px;box-shadow:var(--in);font-size:.8rem;font-weight:600;color:#fff}
+.vis .mixbar span{display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden}.vis .m-clips{background:#6a7cff}.vis .m-images{background:#e8895f}.vis .m-remotion{background:#14a37f}.vis .mix input[type=range]{width:100%}
