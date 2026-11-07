@@ -154,7 +154,7 @@ export const SOURCE_MODE_KEYS = SOURCE_MODES.map(m => m[0])
 export const normSourceMode = s => { const k = String(s ?? '').trim().toLowerCase(); return SOURCE_MODE_KEYS.includes(k) ? k : (SOURCE_MODES.find(m => m[1].toLowerCase() === k)?.[0] || 'polish') }
 export const MAX_INSTRUCTION = 2000
 export const MAX_SCRIPT = 49000                    // one Google Sheets cell holds at most 50,000 characters
-export const normInput = s => /source|adapt|book|rewrite/i.test(String(s ?? '')) ? 'Source' : /script/i.test(String(s ?? '')) ? 'Script' : 'Prompt'
+export const normInput = s => /source|adapt|book|rewrite/i.test(String(s ?? '')) ? 'Source' : /script/i.test(String(s ?? '')) ? 'Script' : /voice|audio|record/i.test(String(s ?? '')) ? 'Voice' : 'Prompt'
 export const STYLE_PRESETS = [
   'calm, clear and friendly, like a good teacher', 'upbeat and energetic, like a favourite YouTube explainer',
   'warm and slow, like a bedtime storyteller', 'serious and steady, like a documentary narrator',
@@ -179,7 +179,7 @@ export const PLAYLIST_COLS = [
   ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Source Mode', 'sourceMode'], ['Custom Instruction', 'instruction'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
   ['Audience', 'audience'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Screen Language', 'screen_language'], ['Aspect', 'aspect'], ['Voice', 'voice'], ['Engine', 'engine'], ['Engine Fixed', 'engineFixed'], ['Web Research', 'webResearch'],
   ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Custom Clips (JSON)', 'clips'], ['B-roll (JSON)', 'broll'], ['Scenes (JSON)', 'scenes'], ['Extra Config (JSON)', 'extra'],
-  ['Output Link', 'output'], ['Video Folder ID', 'folderId'], ['Input Folder ID', 'inputFolderId'], ['Output Folder ID', 'outputFolderId'], ['Video Folder Link', 'folderLink'], ['Notes', 'notes'], ['Updated', 'updated']]
+  ['Output Link', 'output'], ['Video Folder ID', 'folderId'], ['Input Folder ID', 'inputFolderId'], ['Output Folder ID', 'outputFolderId'], ['Video Folder Link', 'folderLink'], ['Notes', 'notes'], ['Updated', 'updated'], ['Own Voice (JSON)', 'voiceAudio']]
 
 // ---------------------------------------------------------------- uploading a sheet into the Playlist sheet
 const ALIAS = { title: 'Video Title', videoname: 'Video Title', name: 'Video Title', topic: 'Topic / Prompt', prompt: 'Topic / Prompt', scripttext: 'Script', sourcetext: 'Script', booktext: 'Script', sourcemode: 'Source Mode', instruction: 'Custom Instruction', instructions: 'Custom Instruction', customprompt: 'Custom Instruction', voiceover: 'Script', inputtype: 'Input Type', type: 'Input Type', mode: 'Input Type', length: 'Minutes', duration: 'Minutes',
@@ -252,7 +252,7 @@ export const clipsFor = v => parseClips(v.clips).map((c, i) => ({
 
 // ---------------------------------------------------------------- B-ROLL (video level only)
 // The user's OWN face video, lip-synced to the narration by the backend and cut in as b-roll.
-// \"percent\" = how much of the final video should show the user's face (the bar). 0 = off. Saved on the video's row (column \"B-roll (JSON)\").
+// "percent" = how much of the final video should show the user's face (the bar). 0 = off. Saved on the video's row (column "B-roll (JSON)").
 // The face videos sit in the video's Drive folder: <video>/Input/broll/.
 export const MAX_BROLL_FILES = 5
 export const BROLL_DEFAULT = { enabled: false, percent: 30, segments: 0, files: [], lipSync: true }
@@ -275,6 +275,27 @@ export const brollFor = v => {
     : undefined
 }
 
+// ---------------------------------------------------------------- OWN VOICE RECORDING (a video, or a summary video)
+// The user records or uploads their own voice. That recording IS the script:
+//   use = 'as_is'      the backend transcribes it (for scenes / captions) and keeps the user's real voice as the voice-over
+//   use = 'transcribe' the backend only types out the words and narrates them with the chosen Frame voice
+// Playlist video: input type "Voice" (always on). Summary video: "enabled" switches it on. File sits in Drive (<video>/Input/voice/ or Summary-a-Video/Voice/).
+export const AUDIO_ACCEPT = 'audio/*,.mp3,.wav,.m4a,.aac,.ogg,.opus,.webm,.flac,.wma'
+export const isAudioFile = f => /^audio\//.test(f.type || '') || /\.(mp3|wav|m4a|aac|ogg|opus|webm|flac|wma)$/i.test(f.name || '')
+export const VOICE_USES = [['as_is', 'Use my recording as the voice-over (my real voice is heard)'], ['transcribe', 'Only use my words: Frame types them out and narrates with the chosen voice']]
+export const cleanVoiceAudio = a => {
+  a = a || {}
+  return { enabled: !!a.enabled, name: String(a.name || '').slice(0, 160), fileId: String(a.fileId || ''), url: String(a.url || ''), seconds: num(a.seconds, 0, 0, 86400), use: VOICE_USES.some(u => u[0] === a.use) ? a.use : 'as_is' }
+}
+export const parseVoiceAudio = s => { try { return cleanVoiceAudio(typeof s === 'object' && s ? s : JSON.parse(String(s || '').trim() || '{}')) } catch { return cleanVoiceAudio({}) } }
+export const stringifyVoiceAudio = a => { const c = cleanVoiceAudio(a); return c.enabled || c.fileId || c.url ? JSON.stringify(c) : '' }   // nothing = empty cell
+export const hasVoiceFile = a => !!(a.fileId || a.url)
+// What the backend receives as config.voice_audio. force = the video type itself says "voice"; otherwise the switch must be on.
+export const voiceAudioFor = (v, force = false) => {
+  const a = parseVoiceAudio(v.voiceAudio)
+  return (force || a.enabled) && hasVoiceFile(a) ? { name: a.name, file_id: a.fileId, url: a.url, seconds: a.seconds || undefined, use: a.use } : undefined
+}
+
 // ---------------------------------------------------------------- MY VOICES (a cloned voice made with Gemini voice replication)
 // A custom voice is only an ID (voice_...) that Gemini keeps in the user's Gemini project. The recordings are NOT stored by Frame.
 // The list lives in the global config (frame_config.json) so every playlist can use it.
@@ -289,10 +310,10 @@ export const voiceLabel = (g, id) => (g?.my_voices || []).find(v => v.id === id)
 export const customVoiceFor = (g, id) => { const v = (g?.my_voices || []).find(x => x.id === id); return v ? { id: v.id, name: v.name, model: v.model || '', type: 'replicated' } : isCustomVoice(id) ? { id, name: id, model: '', type: 'replicated' } : undefined }
 
 // ---------------------------------------------------------------- SUMMARY VIDEOS (a long video in, a short summary video out)
-// The user adds a YouTube link or a video file. Files live in Drive/Frame AI/Summary-a-Video/. Each one is a row in the \"Summary Queue\" sheet.
+// The user adds a YouTube link or a video file. Files live in Drive/Frame AI/Summary-a-Video/. Each one is a row in the "Summary Queue" sheet.
 // Hold = not started (the backend must not touch it). Waiting = the user pressed Start. The rest is set by the backend, same as playlist videos.
 export const SUMMARY_SOURCES = ['YouTube', 'Upload', 'Drive']
-export const SUMMARY_COLS = [['#', 'order'], ['Title', 'title'], ['Source', 'source'], ['YouTube Link', 'link'], ['File ID', 'fileId'], ['Drive Link', 'driveLink'], ['Max Minutes', 'maxMinutes'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Style', 'style'], ['Status', 'status'], ['Output Link', 'output'], ['Notes', 'notes'], ['Added', 'added'], ['Updated', 'updated'], ['Start (s)', 'startSec'], ['End (s)', 'endSec'], ['Duration (s)', 'durationSec'], ['Visuals (JSON)', 'visuals']]
+export const SUMMARY_COLS = [['#', 'order'], ['Title', 'title'], ['Source', 'source'], ['YouTube Link', 'link'], ['File ID', 'fileId'], ['Drive Link', 'driveLink'], ['Max Minutes', 'maxMinutes'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Style', 'style'], ['Status', 'status'], ['Output Link', 'output'], ['Notes', 'notes'], ['Added', 'added'], ['Updated', 'updated'], ['Start (s)', 'startSec'], ['End (s)', 'endSec'], ['Duration (s)', 'durationSec'], ['Visuals (JSON)', 'visuals'], ['Own Voice (JSON)', 'voiceAudio']]
 export const SUMMARY_STYLES = [['highlights', 'Highlights: the key moments, in order'], ['story', 'Story: a short narrated retelling'], ['key_points', 'Key points: the main ideas, one by one']]
 export const SUMMARY_MIN = 0.5, SUMMARY_MAX = 60
 // ---- visuals: tells the backend WHAT to show in the summary video. Everything comes from the source video or from Frame itself, nothing from the web. ----
@@ -339,14 +360,15 @@ export const parseT = v => { const t = String(v ?? '').trim(); if (!t) return ''
 export const summaryPart = v => { const s = parseFloat(v.startSec), e = parseFloat(v.endSec); return Number.isFinite(e) && e > 0 ? { start: Number.isFinite(s) && s > 0 ? s : 0, end: e } : null }   // null = the whole video
 export const normSummaryStatus = s => normStatus(s)
 export function summaryJob(g, v) {
-  const minutes = num(v.maxMinutes, 3, SUMMARY_MIN, SUMMARY_MAX)
+  const minutes = num(v.maxMinutes, 3, SUMMARY_MIN, SUMMARY_MAX), va = voiceAudioFor(v)   // own voice: the recording sets the length (never cut short)
   return {
     row: v.row, title: v.title, config: {
       task: 'summary_video', title: v.title, source: v.source === 'YouTube' ? 'youtube' : 'drive_file', youtube_url: v.source === 'YouTube' ? v.link : '', file_id: v.fileId || '', drive_link: v.driveLink || '',
-      max_minutes: minutes, summary_style: v.style || 'highlights', language: v.language || 'en', translate_to: normLangs(v.translateTo),
+      max_minutes: va?.seconds ? Math.max(minutes, Math.min(SUMMARY_MAX, Math.ceil(va.seconds / 6) / 10)) : minutes, summary_style: v.style || 'highlights', language: v.language || 'en', translate_to: normLangs(v.translateTo),
       tts_models: csv(g.models.tts).join(','), light_models: csv(g.models.light).join(','), medium_models: csv(g.models.medium).join(','), code_models: csv(g.models.code).join(','),
       transcription_models: csv(g.models.transcription).join(','), rpm: +g.limits.rpm, max_wait: +g.limits.max_wait, urdu_font: g.tools.urdu_font, workdir: g.tools.workdir, output_dir: `${g.tools.output_dir}/summary`,
       visuals: visualsFor(v),
+      ...(va ? { narration: 'own_voice', voice_audio: { ...va, language: v.language || 'en' } } : {}),
       ...(summaryPart(v) ? { start_sec: summaryPart(v).start, end_sec: summaryPart(v).end } : {}), source_duration_sec: parseFloat(v.durationSec) || undefined,
       summary_folder_id: v.folderId || '',
     },
@@ -438,6 +460,7 @@ export function resolveJob(g, p, v, playlist) {
   const tts = p.tts_strict && pin ? [pin] : [...(pin ? [pin] : []), ...rest]   // a pinned model keeps the voice identical across the playlist
   const dv = (v.description || '').trim(), dp = (p.description || '').trim()
   const kind = normInput(v.inputType), hasText = !!(v.script || '').trim()
+  const va = kind === 'Voice' ? voiceAudioFor(v, true) : undefined, isVoice = !!va   // own recording; without a file it falls back to the prompt
   const isScript = kind === 'Script' && hasText   // a script row with no script text falls back to its prompt
   const sm = normSourceMode(v.sourceMode), isSource = kind === 'Source' && (hasText || (sm === 'custom' && !!(v.instruction || '').trim()))   // custom mode may run on the instruction alone
   const thumbnail = thumbnailFor(p, v)
@@ -446,10 +469,11 @@ export function resolveJob(g, p, v, playlist) {
   const wr = String(v.webResearch ?? '').trim().toLowerCase(), research = wr ? !/^(0|false|no|n|off)$/.test(wr) : p.web_research !== false   // row > project > ON
   const cfg = {
     description: [dv, dp].filter(Boolean).join('\n\n'), description_video: dv, description_project: dp, thumbnail,
-    input_type: isSource ? 'source' : isScript ? 'script' : 'prompt', script: isScript ? v.script.trim() : '',
+    input_type: isVoice ? 'voice' : isSource ? 'source' : isScript ? 'script' : 'prompt', script: isScript ? v.script.trim() : '',
+    voice_audio: va ? { ...va, language: v.language || p.language } : undefined, transcription_models: isVoice ? csv(g.models.transcription).join(',') : '',   // the recording is transcribed by the backend
     source_text: isSource ? (v.script || '').trim() : '', source_mode: isSource ? sm : '',
     custom_instruction: (isSource || kind === 'Prompt') ? (v.instruction || '').trim() : '',
-    topic: (v.topic || v.title || '').trim(), minutes: +v.minutes || (isScript || (isSource && (sm === 'polish' || sm === 'rewrite')) ? '' : +p.minutes || 3), audience: v.audience || p.audience,
+    topic: (v.topic || v.title || '').trim(), minutes: +v.minutes || (isScript || isVoice || (isSource && (sm === 'polish' || sm === 'rewrite')) ? '' : +p.minutes || 3), audience: v.audience || p.audience,
     language: v.language || p.language, translate_to: normLangs(v.translateTo).length ? normLangs(v.translateTo) : normLangs(p.translate_to), screen_language: v.screen_language || p.screen_language,
     aspect: normAspect(v.aspect) || normAspect(p.aspect) || '16:9',   // row > project > built-in 16:9
     voice: v.voice || p.voice, custom_voice: customVoiceFor(g, v.voice || p.voice), tts_style: p.tts_style, tts_engine: p.tts_engine, cloud_voices: p.cloud_voices,

@@ -1,6 +1,6 @@
 // Drive layer for the pipeline: JSON config files, the per-playlist "Playlist" sheet, thumbnails.
 import * as G from './drive.js'
-import { MAX_BROLL_FILES, parseBroll, brollFor, normLangs, PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, clipsFor, scenesFor, detectSceneEngine, SCENE_FILE_RE, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
+import { MAX_BROLL_FILES, parseBroll, brollFor, normLangs, PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, voiceAudioFor, isAudioFile, clipsFor, scenesFor, detectSceneEngine, SCENE_FILE_RE, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
 const { api, find, ensureFolder, put, read, append, log, safe, now, upload, delRow, getToken, enc, D, S } = G
 const mkFolder = (name, parent) => api(`${D}/files?fields=id`, { method: 'POST', body: JSON.stringify({ name, mimeType: G.FOLDER, parents: [parent] }) })
 const auth = () => ({ Authorization: `Bearer ${getToken()}` })
@@ -100,12 +100,12 @@ async function putText(parent, name, text, type = 'text/plain') {
 }
 // the input side of the folder: a plain snapshot of what the user typed, so the folder is self-contained
 async function writeInput(o) {
-  const isScript = o.inputType === 'Script', isSource = o.inputType === 'Source'
-  const input = { title: o.title, input_type: isSource ? 'source' : isScript ? 'script' : 'prompt', topic: o.topic || '', script: isScript ? o.script || '' : '', source_text: isSource ? o.script || '' : '', source_mode: isSource ? o.sourceMode || 'polish' : '', custom_instruction: o.instruction || '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', translate_to: normLangs(o.translateTo), screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', custom_clips: clipsFor(o), broll: brollFor(o) || null, custom_scenes: scenesFor(o), extra: o.extra || '', saved: now() }
+  const isScript = o.inputType === 'Script', isSource = o.inputType === 'Source', isVoice = o.inputType === 'Voice' && !!voiceAudioFor(o, true)
+  const input = { title: o.title, input_type: isVoice ? 'voice' : isSource ? 'source' : isScript ? 'script' : 'prompt', voice_audio: isVoice ? voiceAudioFor(o, true) : null, topic: o.topic || '', script: isScript ? o.script || '' : '', source_text: isSource ? o.script || '' : '', source_mode: isSource ? o.sourceMode || 'polish' : '', custom_instruction: o.instruction || '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', translate_to: normLangs(o.translateTo), screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', custom_clips: clipsFor(o), broll: brollFor(o) || null, custom_scenes: scenesFor(o), extra: o.extra || '', saved: now() }
   await putText(o.inputFolderId, 'input.json', JSON.stringify(input, null, 2), 'application/json')
   if (isScript) await putText(o.inputFolderId, 'script.txt', o.script || '')
   else if (isSource) await putText(o.inputFolderId, 'source.txt', o.script || '')
-  else await putText(o.inputFolderId, 'prompt.txt', o.topic || o.title || '')
+  else if (!isVoice) await putText(o.inputFolderId, 'prompt.txt', o.topic || o.title || '')
   if ((o.description || '').trim()) await putText(o.inputFolderId, 'description.txt', o.description)
 }
 
@@ -281,5 +281,12 @@ export async function uploadVideoBroll(p, o, file) {
   const ids = await ensureVideoFolder(p, o), inputId = o.inputFolderId || ids.inputFolderId
   const dir = await ensureFolder('broll', inputId), r = await upload(file, dir.id)
   return { ids, file: { name: file.name, fileId: r.id, url: r.webViewLink } }
+}
+// ---------- own voice: the user's recording of the script, saved to <video>/Input/voice/. The row (column "Own Voice (JSON)") is saved by saveVideo. ----------
+export async function uploadVideoVoice(p, o, file, seconds) {
+  if (!isAudioFile(file)) throw new Error(`${file.name} is not an audio file. Use .mp3, .wav, .m4a, .ogg, .webm or .flac.`)
+  const ids = await ensureVideoFolder(p, o), inputId = o.inputFolderId || ids.inputFolderId
+  const dir = await ensureFolder('voice', inputId), r = await upload(file, dir.id)
+  return { ids, audio: { name: file.name, fileId: r.id, url: r.webViewLink, seconds: seconds || 0 } }
 }
 export const brollFull = b => parseBroll(b).files.length >= MAX_BROLL_FILES

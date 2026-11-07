@@ -4,35 +4,50 @@ import Trim from './SummaryTrim.jsx'
 import Visuals from './SummaryVisuals.jsx'
 import { Fold } from './Blocks.jsx'
 import { Confirm } from './Classic.jsx'
-import { LANGS, TRANSLATE_LANGS, summaryPart, fmtT, normLangs, isLocked, SUMMARY_STYLES, SUMMARY_MIN, SUMMARY_MAX, buildSummaryJobs } from './config.js'
+import VoiceUpload, { UseSelect } from './VoiceUpload.jsx'
+import { LANGS, TRANSLATE_LANGS, summaryPart, fmtT, normLangs, isLocked, SUMMARY_STYLES, SUMMARY_MIN, SUMMARY_MAX, buildSummaryJobs, parseVoiceAudio, stringifyVoiceAudio, hasVoiceFile } from './config.js'
 
 const cls = s => 'st-' + (s || 'Hold').toLowerCase().replace(/\s+/g, '-')
 
 function Item({ r, run, w, reload, ask }) {
   const [e, setE] = useState(r), locked = isLocked(r.status), up = k => ev => setE({ ...e, [k]: ev.target.value })
   const mins = parseFloat(e.maxMinutes), pt = summaryPart(e), bad = !(mins >= SUMMARY_MIN && mins <= SUMMARY_MAX) || (!!e.endSec && !(pt && pt.end > pt.start))
+  const va = parseVoiceAudio(e.voiceAudio), hasVa = hasVoiceFile(va), noVoice = va.enabled && !hasVa   // own voice switched on but no recording yet
+  const setVa = patch => setE(c => ({ ...c, voiceAudio: stringifyVoiceAudio({ ...parseVoiceAudio(c.voiceAudio), ...patch }) }))
+  const pickVoice = async (file, secs) => {   // saved at once: the recording is already in Drive
+    const audio = await S.uploadVoice(w, file, secs), next = { ...e, voiceAudio: stringifyVoiceAudio({ ...va, ...audio, enabled: true }) }
+    await S.saveSummary(w, next); setE(next); await reload()
+  }
   const save = (patch = {}, msg = 'Saving…') => run(msg, async () => { await S.saveSummary(w, { ...e, ...patch }); await reload() })
   return <div className={'card video ' + cls(r.status)}>
     <div className="vhead"><span className="num">{r.order || r.row - 1}</span>
-      <div><h3>{r.title}</h3><small className="muted">{r.source === 'YouTube' ? <a href={r.link} target="_blank" rel="noreferrer">YouTube link</a> : <a href={r.driveLink} target="_blank" rel="noreferrer">{r.source === 'Upload' ? 'uploaded video' : 'video in Drive'}</a>} · {summaryPart(r) ? `part ${fmtT(summaryPart(r).start)} to ${fmtT(summaryPart(r).end)}` : r.durationSec ? `whole video (${fmtT(r.durationSec)})` : 'whole video'} · summary up to {r.maxMinutes || 3} min</small></div>
+      <div><h3>{r.title}</h3><small className="muted">{r.source === 'YouTube' ? <a href={r.link} target="_blank" rel="noreferrer">YouTube link</a> : <a href={r.driveLink} target="_blank" rel="noreferrer">{r.source === 'Upload' ? 'uploaded video' : 'video in Drive'}</a>} · {summaryPart(r) ? `part ${fmtT(summaryPart(r).start)} to ${fmtT(summaryPart(r).end)}` : r.durationSec ? `whole video (${fmtT(r.durationSec)})` : 'whole video'} · summary up to {r.maxMinutes || 3} min{parseVoiceAudio(r.voiceAudio).enabled && hasVoiceFile(parseVoiceAudio(r.voiceAudio)) ? ' · own voice narration' : ''}</small></div>
       <span className="pill">{r.status}</span></div>
     <div className="vbody">
       {locked
         ? <p className="muted">🔒 <b>{r.status}</b>: the backend has taken this one, so it can no longer be changed here.{r.output && <> <a href={r.output} target="_blank" rel="noreferrer">Open the summary video</a></>}</p>
         : <fieldset className="cols">
+          <fieldset className="wide voicebox"><legend>Narration</legend>
+            <div className="seg tabs">{[[false, 'Frame writes the summary'], [true, 'My own voice recording']].map(([k, l]) => <button key={String(k)} type="button" className={va.enabled === k ? 'on' : ''} onClick={() => setVa({ enabled: k })}>{l}</button>)}</div>
+            {va.enabled && <>
+              <VoiceUpload run={run} locked={locked} value={hasVa ? va : null} busy="Uploading your recording…" onPick={pickVoice} onClear={() => setVa({ fileId: '', url: '', name: '', seconds: 0 })} />
+              {hasVa && <UseSelect value={va.use} onChange={k => setVa({ use: k })} />}
+              <small className="hint">Your recording is the script of the summary. The backend types it out and picks the matching moments of the video. The summary is as long as your recording{va.seconds > 0 ? ` (${fmtT(va.seconds)})` : ''}, so “Longest summary” and “Style” are not used. Speak in the “Summary language” below. The recording goes to the Voice folder inside Summary-a-Video.</small></>}
+          </fieldset>
           <Trim e={e} setE={setE} />
           <Visuals e={e} setE={setE} />
-          <label>Longest summary (minutes)<input type="number" min={SUMMARY_MIN} max={SUMMARY_MAX} step="0.5" value={e.maxMinutes} onChange={up('maxMinutes')} /><small className="hint">The summary will not be longer than this ({SUMMARY_MIN} to {SUMMARY_MAX} min).</small></label>
-          <label>Style<select value={e.style || 'highlights'} onChange={up('style')}>{SUMMARY_STYLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+          <label>Longest summary (minutes)<input type="number" min={SUMMARY_MIN} max={SUMMARY_MAX} step="0.5" value={e.maxMinutes} onChange={up('maxMinutes')} /><small className="hint">{va.enabled ? 'Not used with your own voice: the recording decides the length.' : `The summary will not be longer than this (${SUMMARY_MIN} to ${SUMMARY_MAX} min).`}</small></label>
+          <label>Style<select disabled={va.enabled} value={e.style || 'highlights'} onChange={up('style')}>{SUMMARY_STYLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
           <label>Summary language<select value={e.language || 'en'} onChange={up('language')}>{LANGS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
           <fieldset className="langs wide"><legend>Also translate into</legend><div className="chips">{TRANSLATE_LANGS.map(([k, l]) => <label key={k} className="chk"><input type="checkbox" checked={normLangs(e.translateTo).includes(k)} onChange={ev => { const on = normLangs(e.translateTo); setE({ ...e, translateTo: (ev.target.checked ? [...on, k] : on.filter(x => x !== k)).join(',') }) }} />{l}</label>)}</div></fieldset>
           <label className="wide">Notes (optional)<input value={e.notes || ''} onChange={up('notes')} placeholder="e.g. focus on the part about prices" /></label>
         </fieldset>}
       <div className="row tight">
-        {!locked && r.status === 'Hold' && <button className="cta sm" disabled={bad} onClick={() => save({ status: 'Waiting' }, 'Starting the summary task…')}>▶ Start summary ({bad ? '?' : mins} min max)</button>}
+        {!locked && r.status === 'Hold' && <button className="cta sm" disabled={bad || noVoice} onClick={() => save({ status: 'Waiting' }, 'Starting the summary task…')}>▶ Start summary ({va.enabled ? 'own voice' : bad ? '?' : mins + ' min max'})</button>}
         {!locked && r.status === 'Waiting' && <><span className="ok">Started. The backend will pick it up.</span><button className="ghost sm" onClick={() => save({ status: 'Hold' }, 'Putting on Hold…')}>Stop / back to Hold</button></>}
         {!locked && <button className="ghost sm" disabled={bad} onClick={() => save({}, 'Saving…')}>Save settings</button>}
         <button className="ghost sm danger" disabled={locked} onClick={() => ask(r)}>Remove</button></div>
+      {noVoice && !locked && <p className="bad">Upload or record your voice first, or switch Narration back to “Frame writes the summary”.</p>}
       {bad && !locked && <p className="bad">Check the summary length ({SUMMARY_MIN} to {SUMMARY_MAX} minutes) and that the end time is after the start time.</p>}
     </div></div>
 }

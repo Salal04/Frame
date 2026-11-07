@@ -10,7 +10,8 @@ import Broll from './Broll.jsx'
 import { TRANSLATE_LANGS, normLangs, parseBroll } from './config.js'
 import { useVideoList, rowGet } from './ListTools.jsx'
 import Scenes, { SceneDraft, sceneNote } from './Scenes.jsx'
-import { engineLabel, estimateRender, normEngine, parseSceneText, stringifyScenes } from './config.js'
+import { engineLabel, estimateRender, normEngine, parseSceneText, stringifyScenes, parseVoiceAudio, stringifyVoiceAudio, hasVoiceFile } from './config.js'
+import VoiceUpload, { UseSelect } from './VoiceUpload.jsx'
 
 const inherit = (l = 'Playlist default') => [['', l]]
 const cls = s => 'st-' + (s || 'Hold').toLowerCase().replace(/\s+/g, '-')
@@ -33,10 +34,18 @@ function SourceOptions({ mode, instruction, onMode, onInstruction }) {
 
 function Row({ r, g, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, setUi }) {
   const [e, setE] = useState(r), open = !!ui.rowOpen, setOpen = v => setUi(x => ({ ...x, rowOpen: v })), tf = useRef(), sf = useRef(), up = k => ev => setE({ ...e, [k]: ev.target.value })
+  const va = parseVoiceAudio(e.voiceAudio), hasVa = hasVoiceFile(va)
+  const setVa = patch => setE(c => ({ ...c, voiceAudio: stringifyVoiceAudio({ ...parseVoiceAudio(c.voiceAudio), ...patch }) }))
+  const pickVoice = async (file, secs) => {   // saved at once: the recording is already in Drive
+    const { ids, audio } = await P.uploadVideoVoice(p, e, file, secs)
+    const saved = { ...e, ...ids, voiceAudio: stringifyVoiceAudio({ ...va, ...audio, enabled: true }) }
+    await P.saveVideo(p, saved); setE(saved); await reload()
+  }
   const save = () => run('Saving video…', async () => {
     scenesTooBig(e.scenes)
     { const b = parseBroll(e.broll); if (b.enabled && b.percent > 0 && !b.files.length) throw new Error('B-roll is on, but no face video of you is uploaded yet. Upload one, or switch b-roll off.') }
     if (e.inputType === 'Script') { if (!(e.script || '').trim()) throw new Error('This video is set to Script, but the script is empty.'); tooLong(e.script) }
+    if (e.inputType === 'Voice' && !hasVa) throw new Error('This video is set to My own voice, but no recording is uploaded yet.')
     if (e.inputType === 'Source') { const sm = normSourceMode(e.sourceMode); if (sm === 'custom' ? !(e.instruction || '').trim() : !(e.script || '').trim()) throw new Error(sm === 'custom' ? 'Custom mode needs an instruction.' : 'This video is set to Source text, but the text is empty.'); tooLong(e.script) }
     await P.saveVideo(p, { ...e, sourceMode: e.inputType === 'Source' ? normSourceMode(e.sourceMode) : '' }); await reload(); return true })
   const pickScript = ev => { const x = ev.target.files[0]; ev.target.value = ''; if (x) run('Reading the script…', async () => { const t = await G.readTextFile(x); tooLong(t); setE(c => ({ ...c, script: t })) }) }
@@ -44,7 +53,7 @@ function Row({ r, g, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, 
   const back = (patch, msg) => run(msg, async () => { await P.saveVideo(p, { ...e, ...patch }); await reload() })
   return <div className={'card video ' + cls(r.status)}>
     <div className="vhead" onClick={() => setOpen(!open)}><span className="num">{r.order || r.row - 1}</span>
-      <div><h3>{r.title}</h3><small className="muted">{r.inputType === 'Script' ? 'own script' : r.inputType === 'Source' ? 'source text · ' + (SOURCE_MODES.find(m => m[0] === normSourceMode(r.sourceMode))?.[1] || '').toLowerCase() : 'prompt'} · {r.minutes || (r.inputType === 'Script' ? 'length from script' : cfg.minutes + ' min')}{r.minutes ? ' min' : ''} · {normAspect(r.aspect) ? r.aspect + ' (own)' : (normAspect(cfg.aspect) || '16:9') + ' (project)'} · {enginePhrase(r.engine, r.engineFixed, cfg.engine, cfg.engine_fixed)} · {r.thumbLink ? 'own thumbnail' : 'default thumbnail'} · {single ? (r.description ? 'own description' : 'no description') : (r.description ? 'own description + project description' : 'project description')}</small></div>
+      <div><h3>{r.title}</h3><small className="muted">{r.inputType === 'Script' ? 'own script' : r.inputType === 'Voice' ? 'own voice recording' : r.inputType === 'Source' ? 'source text · ' + (SOURCE_MODES.find(m => m[0] === normSourceMode(r.sourceMode))?.[1] || '').toLowerCase() : 'prompt'} · {r.minutes || (r.inputType === 'Script' ? 'length from script' : r.inputType === 'Voice' ? 'length from recording' : cfg.minutes + ' min')}{r.minutes ? ' min' : ''} · {normAspect(r.aspect) ? r.aspect + ' (own)' : (normAspect(cfg.aspect) || '16:9') + ' (project)'} · {enginePhrase(r.engine, r.engineFixed, cfg.engine, cfg.engine_fixed)} · {r.thumbLink ? 'own thumbnail' : 'default thumbnail'} · {single ? (r.description ? 'own description' : 'no description') : (r.description ? 'own description + project description' : 'project description')}</small></div>
       <span className="pill">{r.status}</span></div>
     {open && <div className="vbody">
       <Blocks stamp={e} save={() => save()} ctl={[{ open: ui.blk === undefined ? null : ui.blk, done: ui.done || {} }, f => setUi(x => { const n = f({ open: x.blk === undefined ? null : x.blk, done: x.done || {} }); return { ...x, blk: n.open, done: n.done } })]} items={[
@@ -59,11 +68,15 @@ function Row({ r, g, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, 
         </> },
         { id: 'content', title: 'Title and content', body: <>
       <label>Title<input value={e.title} onChange={up('title')} /></label>
-      <label>This video is made from<select value={e.inputType} onChange={up('inputType')}><option value="Prompt">A prompt (Frame writes the script)</option><option value="Source">Text I pasted, e.g. from a book (Frame adapts it)</option><option value="Script">My own script (Frame uses it as written)</option></select></label>
+      <label>This video is made from<select value={e.inputType} onChange={up('inputType')}><option value="Prompt">A prompt (Frame writes the script)</option><option value="Source">Text I pasted, e.g. from a book (Frame adapts it)</option><option value="Script">My own script (Frame uses it as written)</option><option value="Voice">My own voice recording (my voice is the script)</option></select></label>
       {e.inputType === 'Source' ? <>
           <label>Source text<textarea rows={9} value={e.script} onChange={up('script')} placeholder="Paste the text here, straight from the book or article, or upload a file below." /><small className="hint">{(e.script || '').length.toLocaleString()} characters.</small></label>
           <div className="row tight"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost sm" onClick={() => sf.current.click()}>Upload text file</button></div>
           <SourceOptions mode={e.sourceMode} instruction={e.instruction} onMode={k => setE({ ...e, sourceMode: k })} onInstruction={v => setE({ ...e, instruction: v })} /></>
+      : e.inputType === 'Voice'
+        ? <><VoiceUpload run={run} locked={isLocked(r.status)} value={hasVa ? va : null} busy="Uploading your recording…" onPick={pickVoice} onClear={() => setVa({ fileId: '', url: '', name: '', seconds: 0 })} />
+          {hasVa && <UseSelect value={va.use} disabled={isLocked(r.status)} onChange={k => setVa({ use: k })} />}
+          <small className="hint">{hasVa ? 'Your recording is the script. The backend types it out and builds the scenes from what you say.' : 'Record yourself or upload an audio file. Whatever you say becomes the script of this video.'} Speak in the “Narration language” chosen under Length, language, voice. The recording goes to this video's Drive folder (Input/voice).</small></>
       : e.inputType === 'Script'
         ? <><label>Script<textarea rows={9} value={e.script} onChange={up('script')} placeholder="Paste the full script here, or upload a file below." /><small className="hint">{(e.script || '').length.toLocaleString()} characters. Used word for word as the narration.</small></label>
           <div className="row tight"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost sm" onClick={() => sf.current.click()}>Upload script file</button><small className="muted">.txt, .md, .pdf, .docx, .doc, .rtf, .odt. It replaces the text above.</small></div></>
@@ -75,14 +88,14 @@ function Row({ r, g, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, 
       <Scenes e={e} setE={setE} p={p} run={run} reload={reload} locked={isLocked(r.status)} />
         </> },
         { id: 'length', title: 'Length, language, voice', body: <>
-      <div className="cols"><label>Minutes<input type="number" min="0.5" step="0.5" value={e.minutes} placeholder={e.inputType === 'Script' || (e.inputType === 'Source' && ['polish', 'rewrite'].includes(normSourceMode(e.sourceMode))) ? 'from text' : cfg.minutes} onChange={up('minutes')} /></label>
+      <div className="cols"><label>Minutes<input type="number" min="0.5" step="0.5" value={e.minutes} placeholder={e.inputType === 'Script' || e.inputType === 'Voice' || (e.inputType === 'Source' && ['polish', 'rewrite'].includes(normSourceMode(e.sourceMode))) ? 'from text' : cfg.minutes} onChange={up('minutes')} /></label>
         <label>Audience<input value={e.audience} placeholder={cfg.audience} onChange={up('audience')} /></label>
         <label>Narration language<select value={e.language} onChange={up('language')}>{[...inherit(), ...LANGS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <fieldset className="langs wide"><legend>Also translate into</legend><div className="chips">{TRANSLATE_LANGS.map(([k, l]) => <label key={k} className="chk"><input type="checkbox" checked={normLangs(e.translateTo).includes(k)} onChange={ev => { const on = normLangs(e.translateTo); setE({ ...e, translateTo: (ev.target.checked ? [...on, k] : on.filter(x => x !== k)).join(',') }) }} />{l}</label>)}</div>
           <small className="hint">{normLangs(e.translateTo).length ? 'Extra versions of this video are made in the ticked languages.' : `Empty = playlist default${normLangs(cfg.translate_to).length ? ` (${normLangs(cfg.translate_to).join(', ')})` : ' (no translation)'}. English is the base script.`}</small></fieldset>
         <label>Screen language<select value={e.screen_language} onChange={up('screen_language')}>{[...inherit(), ...LANGS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <label>Aspect<select value={e.aspect} onChange={up('aspect')}>{[...inherit(`Project default (${normAspect(cfg.aspect) || '16:9'})`), ...ASPECTS].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small className="hint">{aspectHint(e.aspect || cfg.aspect || '16:9')}</small></label>
-        <label>Voice<select value={e.voice} onChange={up('voice')}>{[...inherit('Playlist narrator'), ...(g.my_voices || []).map(v => [v.id, `★ ${v.name} (my voice)`]), ...VOICES.map(v => [v[0], `${v[0]} · ${v[1]}`])].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label></div>
+        <label>Voice{e.inputType === 'Voice' && hasVa && va.use === 'as_is' && <small className="hint"> (not used: your own voice is the voice-over)</small>}<select value={e.voice} disabled={e.inputType === 'Voice' && hasVa && va.use === 'as_is'} onChange={up('voice')}>{[...inherit('Playlist narrator'), ...(g.my_voices || []).map(v => [v.id, `★ ${v.name} (my voice)`]), ...VOICES.map(v => [v[0], `${v[0]} · ${v[1]}`])].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label></div>
         </> },
         { id: 'engine', title: 'Engine and extra config', body: <>
       <EnginePicker engine={e.engine} fixed={e.engineFixed} inherit={engineLabel(cfg.engine || 'auto')}
@@ -130,7 +143,7 @@ function SheetImport({ p, rows, run, reload }) {
   </div>
 }
 
-const BLANK = { mode: 'Prompt', title: '', topic: '', script: '', minutes: '', sourceMode: 'polish', instruction: '', sceneText: '' }
+const BLANK = { mode: 'Prompt', title: '', topic: '', script: '', minutes: '', sourceMode: 'polish', instruction: '', sceneText: '', voiceFile: null, voiceSecs: null, voiceUse: 'as_is' }
 
 export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb, gotoEdit, single }) {
   const [nt, setNt] = useState(BLANK), [del, setDel] = useState(null), [ui, setUi] = useState({}), f = useRef(), sf = useRef()
@@ -141,11 +154,17 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
   const waitMin = rows.filter(r => r.status === 'Waiting').reduce((a, r) => { const e = estimateRender({ minutes: +r.minutes || +cfg.minutes || 3, scene_sec: cfg.scene_sec, quality: cfg.quality, max_scenes: cfg.max_scenes, engine: normEngine(r.engine) || normEngine(cfg.engine) || 'auto' }); return [a[0] + e.sec[0] / 60, a[1] + e.sec[1] / 60] }, [0, 0])
   const fmtT = m => m >= 90 ? `${Math.round(m / 6) / 10} h` : `${Math.round(m)} min`
   const add = () => {
-    const ti = nt.title.trim(), tp = nt.topic.trim(), sc = nt.script.trim(), isScript = nt.mode === 'Script', isSource = nt.mode === 'Source', ins = nt.instruction.trim()
-    if (isSource ? (nt.sourceMode === 'custom' ? !ins : !sc) : isScript ? !sc : (!ti && !tp)) return
-    const sceneStr = isScript || isSource ? stringifyScenes(parseSceneText(nt.sceneText)) : ''   // scene descriptions only travel with a script or a source text
+    const ti = nt.title.trim(), tp = nt.topic.trim(), sc = nt.script.trim(), isScript = nt.mode === 'Script', isSource = nt.mode === 'Source', isVoice = nt.mode === 'Voice', ins = nt.instruction.trim()
+    if (isVoice ? !nt.voiceFile : isSource ? (nt.sourceMode === 'custom' ? !ins : !sc) : isScript ? !sc : (!ti && !tp)) return
+    const sceneStr = isScript || isSource || isVoice ? stringifyScenes(parseSceneText(nt.sceneText)) : ''   // scene descriptions only travel with a script or a source text
     run(single ? 'Adding the video…' : 'Adding to the playlist…', async () => {
       if (isScript || isSource) { tooLong(sc); scenesTooBig(sceneStr) }
+      if (isVoice) {   // the recording is uploaded into the new video's own folder, then the row is saved with it
+        const base = { order: rows.length + 1, title: ti || nt.voiceFile.name.replace(/\.[^.]+$/, ''), topic: '', inputType: 'Voice', script: '', minutes: nt.minutes, status: 'Hold', scenes: sceneStr }
+        const { ids, audio } = await P.uploadVideoVoice(p, base, nt.voiceFile, nt.voiceSecs)
+        await P.saveVideo(p, { ...base, ...ids, voiceAudio: stringifyVoiceAudio({ ...audio, enabled: true, use: nt.voiceUse }) })
+        setNt({ ...BLANK, mode: nt.mode }); await reload(); return
+      }
       await P.saveVideo(p, isSource
         ? { order: rows.length + 1, title: ti || sc.slice(0, 60) || ins.slice(0, 60), topic: '', inputType: 'Source', script: sc, sourceMode: nt.sourceMode, instruction: ins, minutes: nt.minutes, status: 'Hold', scenes: sceneStr }
         : isScript
@@ -165,12 +184,12 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
     <div className="stats"><b>{rows.length}</b> videos <b>{Math.round(total * 10) / 10}</b> minutes · {waitMin[1] > 0 && <>waiting videos need about {waitMin[0] === waitMin[1] ? fmtT(waitMin[0]) : `${fmtT(waitMin[0])} to ${fmtT(waitMin[1])}`} to build · </>}{STATUSES.map(s => n(s) ? `${n(s)} ${s.toLowerCase()}` : '').filter(Boolean).join(' · ')}</div>
     {noOwn > 0 && <p className="note">{noOwn} video{noOwn > 1 ? 's have' : ' has'} no thumbnail of its own, so the default template {t.templateName ? <b>{t.templateName}</b> : <b>(none uploaded yet, a plain background is used)</b>} is used and the backend writes the title on it. <button className="link" onClick={() => gotoThumb('')}>Set the default template</button></p>}
     <Fold title="Add a video" note="prompt, text or script">
-    <div className="seg tabs">{[['Prompt', 'From a prompt'], ['Source', 'I have text (book, notes)'], ['Script', 'I have a finished script']].map(([k, l]) => <button key={k} className={nt.mode === k ? 'on' : ''} onClick={() => setNt({ ...nt, mode: k })}>{l}</button>)}</div>
+    <div className="seg tabs">{[['Prompt', 'From a prompt'], ['Source', 'I have text (book, notes)'], ['Script', 'I have a finished script'], ['Voice', 'I have my own voice recording']].map(([k, l]) => <button key={k} className={nt.mode === k ? 'on' : ''} onClick={() => setNt({ ...nt, mode: k })}>{l}</button>)}</div>
     <p className="hint">New videos start on <b>Hold</b>: the backend will not touch them until you set them to Waiting.</p>
-    <p className="hint">{nt.mode === 'Prompt' ? 'Give a topic and Frame writes the script, then makes the video.' : nt.mode === 'Source' ? 'Paste text as it is, for example from a book. You choose how much Frame may change it.' : 'Paste or upload your finished script. Frame uses it as written and only makes the video.'}</p>
+    <p className="hint">{nt.mode === 'Prompt' ? 'Give a topic and Frame writes the script, then makes the video.' : nt.mode === 'Source' ? 'Paste text as it is, for example from a book. You choose how much Frame may change it.' : nt.mode === 'Voice' ? 'Record yourself or upload an audio file. What you say is the script; the backend types it out and makes the video.' : 'Paste or upload your finished script. Frame uses it as written and only makes the video.'}</p>
     <div className="row add"><input value={nt.title} onChange={e => setNt({ ...nt, title: e.target.value })} placeholder="Video title" />
       {nt.mode === 'Prompt' && <input value={nt.topic} onChange={e => setNt({ ...nt, topic: e.target.value })} placeholder="Topic or prompt for the pipeline" />}
-      <input className="mini" type="number" min="0.5" step="0.5" value={nt.minutes} onChange={e => setNt({ ...nt, minutes: e.target.value })} placeholder={nt.mode === 'Script' ? 'auto' : `${cfg.minutes} min`} />
+      <input className="mini" type="number" min="0.5" step="0.5" value={nt.minutes} onChange={e => setNt({ ...nt, minutes: e.target.value })} placeholder={nt.mode === 'Script' || nt.mode === 'Voice' ? 'auto' : `${cfg.minutes} min`} />
       {nt.mode === 'Prompt' && <button className="cta sm" onClick={add}>Add video</button>}</div>
     {nt.mode === 'Prompt' && <input value={nt.instruction} maxLength={MAX_INSTRUCTION} onChange={e => setNt({ ...nt, instruction: e.target.value })} placeholder="Extra instruction (optional), e.g. start with a story" />}
     {nt.mode === 'Source' && <><textarea rows={7} value={nt.script} onChange={e => setNt({ ...nt, script: e.target.value })} placeholder="Paste the text here, straight from the book or article, or upload a file." />
@@ -182,6 +201,11 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
       <SceneDraft text={nt.sceneText} onText={v => setNt(c => ({ ...c, sceneText: v }))} run={run} />
       <div className="row"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost" onClick={() => sf.current.click()}>Upload script file</button>
         <small className="muted">{nt.script.length.toLocaleString()} characters · .txt, .md, .pdf, .docx, .doc, .rtf, .odt</small><button className="cta sm" disabled={!nt.script.trim()} onClick={add}>Add video</button></div></>}
+    {nt.mode === 'Voice' && <><VoiceUpload run={run} busy="Reading the recording…" value={nt.voiceFile ? { name: nt.voiceFile.name, seconds: nt.voiceSecs } : null}
+        onPick={(file, secs) => setNt(c => ({ ...c, voiceFile: file, voiceSecs: secs, title: c.title || file.name.replace(/\.[^.]+$/, '') }))} onClear={() => setNt(c => ({ ...c, voiceFile: null, voiceSecs: null }))} />
+      <UseSelect value={nt.voiceUse} onChange={k => setNt(c => ({ ...c, voiceUse: k }))} />
+      <SceneDraft text={nt.sceneText} onText={v => setNt(c => ({ ...c, sceneText: v }))} run={run} />
+      <div className="row"><small className="muted">The recording is uploaded to the new video's Drive folder when you press Add video.</small><button className="cta sm" disabled={!nt.voiceFile} onClick={add}>Add video</button></div></>}
     </Fold>
     <Fold title="Import videos from a sheet">
     <SheetImport p={p} rows={rows} run={run} reload={reload} />

@@ -2,7 +2,7 @@
 // "Summary Queue" sheet inside Frame AI/Summary-a-Video/. The user sets the longest summary (minutes) and presses Start:
 // that moves the row from Hold to Waiting, which is the signal for the backend. Same Hold/Waiting rule as playlist videos.
 import * as G from './drive.js'
-import { SUMMARY_COLS, SUMMARY_MIN, SUMMARY_MAX, normLangs, normStatus, isLocked, canUserSet } from './config.js'
+import { isAudioFile, SUMMARY_COLS, SUMMARY_MIN, SUMMARY_MAX, normLangs, normStatus, isLocked, canUserSet } from './config.js'
 const { api, find, put, read, append, log, safe, now, upload, delRow, D, S, getToken } = G
 const colL = n => { let s = ''; for (n++; n; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s }
 const HEAD = SUMMARY_COLS.map(c => c[0]), LAST = colL(HEAD.length - 1)
@@ -75,6 +75,13 @@ export async function pickFromDrive(w) {
     await addRow(w, { title: String(d.name).replace(/\.[^.]+$/, ''), source: 'Drive', fileId: c.id, driveLink: c.webViewLink || DRIVE_LINK(c.id) }); n++
   }
   return n
+}
+
+// own voice: the user's recording is the script of the summary. Stored in Summary-a-Video/Voice/ (the row is saved by saveSummary).
+export async function uploadVoice(w, file, seconds) {
+  if (!isAudioFile(file)) throw new Error(`${file.name} is not an audio file. Use .mp3, .wav, .m4a, .ogg, .webm or .flac.`)
+  const dir = await G.ensureFolder('Voice', w.summary.folderId), r = await upload(file, dir.id)
+  return { name: file.name, fileId: r.id, url: r.webViewLink || DRIVE_LINK(r.id), seconds: seconds || 0 }
 }
 
 // ---- change a row. Users may only move Hold <-> Waiting, and never once the backend has the row (checked against the sheet itself). ----
