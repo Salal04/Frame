@@ -1,6 +1,6 @@
 // Drive layer for the pipeline: JSON config files, the per-playlist "Playlist" sheet, thumbnails.
 import * as G from './drive.js'
-import { MAX_BROLL_FILES, parseBroll, brollFor, normLangs, PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, voiceAudioFor, isAudioFile, clipsFor, scenesFor, detectSceneEngine, SCENE_FILE_RE, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
+import { canRetry, MAX_BROLL_FILES, parseBroll, brollFor, normLangs, PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, voiceAudioFor, isAudioFile, clipsFor, scenesFor, detectSceneEngine, SCENE_FILE_RE, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
 const { api, find, ensureFolder, put, read, append, log, safe, now, upload, delRow, getToken, enc, D, S } = G
 const mkFolder = (name, parent) => api(`${D}/files?fields=id`, { method: 'POST', body: JSON.stringify({ name, mimeType: G.FOLDER, parents: [parent] }) })
 const auth = () => ({ Authorization: `Bearer ${getToken()}` })
@@ -114,25 +114,26 @@ async function writeInput(o) {
 export async function saveVideo(p, o, opts = {}) {
   const by = opts.backend || opts.system, existing = !!o.row
   const prev = existing ? normStatus(o.raw?.['Status']) : null
-  let next = normStatus(o.status ?? prev ?? 'Hold'), live = prev
+  let next = normStatus(o.status ?? prev ?? 'Hold'), live = prev, retry = false
   if (!by) {
     if (existing) {   // look at the sheet itself: the backend may have started this video after the page was loaded
       const col = colL(p.head.indexOf('Status'))
       live = normStatus((await read(p.sheetId, `Playlist!${col}${o.row}`))[0]?.[0])
-      if (isLocked(live)) { if (next !== live && next !== prev) throw new Error(`“${o.title}” is already ${live} on the backend, so its status can no longer be changed here.`); next = live }
+      if (canRetry(live, next)) retry = true   // Failed -> Waiting is the one change allowed after the backend took the video
+      else if (isLocked(live)) { if (next !== live && next !== prev) throw new Error(`“${o.title}” is already ${live} on the backend, so its status can no longer be changed here.`); next = live }
       else if (!canUserSet(live, next)) throw new Error(`Only Hold and Waiting can be set by hand. “${next}” is set by the backend.`)
     } else if (isLocked(next)) throw new Error('A new video must start on Hold or Waiting.')
   }
   o = { ...o, status: next }
   const locked = isLocked(next)
-  if (!locked || !o.folderId) o = { ...o, ...await ensureVideoFolder(p, o) }
+  if ((!locked && !retry) || !o.folderId) o = { ...o, ...await ensureVideoFolder(p, o) }
   const raw = { ...(o.raw || {}) }
   PLAYLIST_COLS.forEach(([h, k]) => { if (k in o) raw[h] = o[k] })
   raw['Updated'] = now()
   const arr = p.head.map(h => safe(String(raw[h] ?? '')))   // user-added columns pass through untouched
   if (o.row) await put(p.sheetId, `Playlist!A${o.row}:${colL(p.head.length - 1)}${o.row}`, [arr])
   else await append(p.sheetId, 'Playlist', arr)
-  if (!locked && o.inputFolderId) await writeInput(o)   // once the backend has the video, its input snapshot stays as it was
+  if (!locked && !retry && o.inputFolderId) await writeInput(o)   // once the backend has the video, its input snapshot stays as it was
   await log(p.sheetId, o.row ? (prev !== next ? `Video ${prev} → ${next}` : 'Video saved') : 'Video added', o.title || '')
 }
 // a Waiting video must have its folder before the backend can write into it: build the missing ones, then the caller reloads
@@ -145,6 +146,12 @@ export async function prepareFolders(p, rows) {
 export async function releaseAll(p, rows) {
   let n = 0
   for (const r of rows) if (r.status === 'Hold') { await saveVideo(p, { ...r, status: 'Waiting' }); n++ }
+  return n
+}
+// Failed -> Waiting for many videos at once (the backend resumes each one from its checkpoint)
+export async function retryAllFailed(p, rows) {
+  let n = 0
+  for (const r of rows) if (r.status === 'Failed') { await saveVideo(p, { ...r, status: 'Waiting' }); n++ }
   return n
 }
 export async function deleteVideo(p, o) { await delRow(p.sheetId, p.tabId, o.row - 2); await log(p.sheetId, 'Video removed', o.title) }

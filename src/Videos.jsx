@@ -60,7 +60,8 @@ function Row({ r, g, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, 
         { id: 'status', title: 'Status and folder', note: r.status, noSave: true, body: <>
       <div className="statusbox">
         {isLocked(r.status)
-          ? <p className="muted">🔒 <b>{r.status}</b>: the backend has taken this video, so its status can no longer be changed here.</p>
+          ? <><p className="muted">🔒 <b>{r.status}</b>: the backend has taken this video, so its status can no longer be changed here.</p>
+              {r.status === 'Failed' && <><button className="cta sm" onClick={() => back({ status: 'Waiting' }, 'Sending back to the backend…')}>↻ Retry: back to Waiting</button><small className="hint">The backend continues from its saved progress, so finished steps are not repeated.</small></>}</>
           : <><div className="seg tabs">{[['Hold', 'Hold (backend must not start it)'], ['Waiting', 'Waiting (backend may start it)']].map(([k, l]) => <button key={k} className={r.status === k ? 'on' : ''} disabled={r.status === k} onClick={() => back({ status: k }, k === 'Waiting' ? 'Releasing to the backend…' : 'Putting on Hold…')}>{l}</button>)}</div>
             <small className="hint">You can switch between Hold and Waiting until the backend starts the video. After that the status belongs to the backend.</small></>}
         {r.folderLink ? <small className="muted">Video folder: <a href={r.folderLink} target="_blank" rel="noreferrer">open</a> (Input · Output)</small> : <small className="muted">The video folder (Input / Output) is created when you save it.</small>}
@@ -210,8 +211,8 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
     <Fold title="Import videos from a sheet">
     <SheetImport p={p} rows={rows} run={run} reload={reload} />
     </Fold>
-    <Fold title="Backend tools" note={n('Hold') > 0 ? `${n('Hold')} on Hold` : ''}>
-    <div className="row">{n('Hold') > 0 && <button className="cta sm" onClick={() => run('Releasing all Hold videos…', async () => { await P.releaseAll(p, rows); await reload() })}>Release all {n('Hold')} on Hold → Waiting</button>}<button className="ghost" onClick={exportJobs}>Download jobs for backend</button>
+    <Fold title="Backend tools" note={[n('Hold') > 0 && `${n('Hold')} on Hold`, n('Failed') > 0 && `${n('Failed')} failed`].filter(Boolean).join(' · ')}>
+    <div className="row">{n('Hold') > 0 && <button className="cta sm" onClick={() => run('Releasing all Hold videos…', async () => { await P.releaseAll(p, rows); await reload() })}>Release all {n('Hold')} on Hold → Waiting</button>}{n('Failed') > 0 && <button className="cta sm" onClick={() => run('Sending all Failed videos back…', async () => { await P.retryAllFailed(p, rows); await reload() })}>Retry all {n('Failed')} failed → Waiting</button>}<button className="ghost" onClick={exportJobs}>Download jobs for backend</button>
       <input ref={f} type="file" accept=".json,application/json" hidden onChange={importRes} /><button className="ghost" onClick={() => f.current.click()}>Import results</button>
       <a className="ghost" target="_blank" rel="noreferrer" href={`https://docs.google.com/spreadsheets/d/${p.sheetId}`}>Open sheet</a></div>
     </Fold>

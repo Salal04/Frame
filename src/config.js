@@ -130,7 +130,9 @@ export const STATUSES = ['Hold', 'Waiting', 'In Process', 'Completed', 'Uploaded
 // the rest   = set by the backend only. Once a video leaves Hold/Waiting the user can no longer change its status.
 export const USER_STATUSES = ['Hold', 'Waiting']
 export const isLocked = s => !USER_STATUSES.includes(s)
-export const canUserSet = (from, to) => from === to || (USER_STATUSES.includes(from) && USER_STATUSES.includes(to))
+// Retry: a Failed video may be sent back to Waiting (the backend then resumes it from its saved checkpoint).
+export const canRetry = (from, to) => from === 'Failed' && to === 'Waiting'
+export const canUserSet = (from, to) => from === to || (USER_STATUSES.includes(from) && USER_STATUSES.includes(to)) || canRetry(from, to)
 const norm = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
 export const normStatus = s => {   // also understands the old words (Draft/Ready/Rendering/Done)
   const k = norm(s)

@@ -2,7 +2,7 @@
 // "Summary Queue" sheet inside Frame AI/Summary-a-Video/. The user sets the longest summary (minutes) and presses Start:
 // that moves the row from Hold to Waiting, which is the signal for the backend. Same Hold/Waiting rule as playlist videos.
 import * as G from './drive.js'
-import { isAudioFile, SUMMARY_COLS, SUMMARY_MIN, SUMMARY_MAX, normLangs, normStatus, isLocked, canUserSet } from './config.js'
+import { isAudioFile, SUMMARY_COLS, SUMMARY_MIN, SUMMARY_MAX, normLangs, normStatus, isLocked, canUserSet, canRetry } from './config.js'
 const { api, find, put, read, append, log, safe, now, upload, delRow, D, S, getToken } = G
 const colL = n => { let s = ''; for (n++; n; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s }
 const HEAD = SUMMARY_COLS.map(c => c[0]), LAST = colL(HEAD.length - 1)
@@ -89,8 +89,10 @@ export async function saveSummary(w, o, opts = {}) {
   const id = await sheetOf(w)
   if (!opts.backend) {
     const live = normStatus((await read(id, `Summary!${colL(HEAD.indexOf('Status'))}${o.row}`))[0]?.[0])
-    if (isLocked(live)) throw new Error(`“${o.title}” is already ${live} on the backend, so it can no longer be changed here.`)
-    if (!canUserSet(live, normStatus(o.status))) throw new Error('Only Hold and Waiting can be set by hand.')
+    if (!canRetry(live, normStatus(o.status))) {   // Failed -> Waiting (retry) is the only change allowed after the backend took the row
+      if (isLocked(live)) throw new Error(`“${o.title}” is already ${live} on the backend, so it can no longer be changed here.`)
+      if (!canUserSet(live, normStatus(o.status))) throw new Error('Only Hold and Waiting can be set by hand.')
+    }
   }
   const m = Math.min(SUMMARY_MAX, Math.max(SUMMARY_MIN, parseFloat(o.maxMinutes) || 3))
   const raw = { ...(o.raw || {}) }; SUMMARY_COLS.forEach(([h, k]) => { if (k in o) raw[h] = k === 'maxMinutes' ? m : k === 'translateTo' ? normLangs(o.translateTo).join(',') : o[k] }); raw['Updated'] = now()

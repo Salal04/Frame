@@ -45,6 +45,7 @@ function Item({ r, run, w, reload, ask }) {
       <div className="row tight">
         {!locked && r.status === 'Hold' && <button className="cta sm" disabled={bad || noVoice} onClick={() => save({ status: 'Waiting' }, 'Starting the summary task…')}>▶ Start summary ({va.enabled ? 'own voice' : bad ? '?' : mins + ' min max'})</button>}
         {!locked && r.status === 'Waiting' && <><span className="ok">Started. The backend will pick it up.</span><button className="ghost sm" onClick={() => save({ status: 'Hold' }, 'Putting on Hold…')}>Stop / back to Hold</button></>}
+        {r.status === 'Failed' && <button className="cta sm" onClick={() => save({ status: 'Waiting' }, 'Sending back to the backend…')}>↻ Retry: back to Waiting</button>}
         {!locked && <button className="ghost sm" disabled={bad} onClick={() => save({}, 'Saving…')}>Save settings</button>}
         <button className="ghost sm danger" disabled={locked} onClick={() => ask(r)}>Remove</button></div>
       {noVoice && !locked && <p className="bad">Upload or record your voice first, or switch Narration back to “Frame writes the summary”.</p>}
