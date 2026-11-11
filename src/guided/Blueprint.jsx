@@ -12,7 +12,21 @@ export default function Blueprint({ session, setSession, autosave, global }) {
   const cfg = { ...session.settings, topic: session.title, script: session.inputType === 'Script' || session.inputType === 'Source' ? session.sourceText || '' : '', source_text: session.sourceText || '', scene_sec: 15 }
   const change = patch => setSession(s => ({ ...s, blueprint: { ...s.blueprint, ...patch } }))
   const generate = async () => { if (!gem) return setError('Add a Gemini API key in Control room before generating.'); setBusy('Generating script and scene plan…'); setError(''); setSession(s => ({ ...s, activeStep: { kind: 'blueprint', sceneId: null, params: {}, startedAt: new Date().toISOString() } })); try { const data = session.inputType === 'Script' || session.inputType === 'Source' ? await blueprintFromScript(gem, cfg) : await blueprint(gem, cfg, { onPartial: partial => change({ partial }) }); setSession(s => { const locked = s.scenes.filter(x => x.locked); const made = data.scenes.map(freshScene); locked.forEach(old => { const i = made.findIndex(x => x.id === old.id); if (i >= 0) made[i] = old }); return { ...s, title: data.title || s.title, scenes: made, blueprint: { ...s.blueprint, status: 'draft', plan: data.plan || {}, partial: data.partial || {} }, activeStep: null } }); await autosave.flush(true) } catch (e) { setError(e instanceof QuotaExhausted ? `Quota reached. Try again after ${e.resetAt.toLocaleTimeString()}. Your draft is saved.` : e.message); setSession(s => ({ ...s, activeStep: null })) } finally { setBusy('') } }
-  const edit = (id, patch) => setSession(s => ({ ...s, blueprint: { ...s.blueprint, status: 'draft' }, scenes: s.scenes.map(x => { if (x.id !== id) return x; const narrationChanged = 'narration' in patch && patch.narration !== x.narration, visualChanged = narrationChanged || (('heading' in patch && patch.heading !== x.heading) || ('idea' in patch && patch.idea !== x.idea)); return { ...x, ...patch, ...(narrationChanged ? { narrationStatus: 'stale', voice: { ...x.voice, status: x.voice?.fileId ? 'stale' : x.voice?.status } } : {}), ...(visualChanged && x.visual?.codeFileId ? { visual: { ...x.visual, status: 'stale' } } : {}) } })) }))
+  const edit = (id, patch) => setSession(s => ({
+    ...s,
+    blueprint: { ...s.blueprint, status: 'draft' },
+    scenes: s.scenes.map(x => {
+      if (x.id !== id) return x
+      const narrationChanged = 'narration' in patch && patch.narration !== x.narration
+      const visualChanged = narrationChanged || ('heading' in patch && patch.heading !== x.heading) || ('idea' in patch && patch.idea !== x.idea)
+      return {
+        ...x,
+        ...patch,
+        ...(narrationChanged ? { narrationStatus: 'stale', voice: { ...x.voice, status: x.voice?.fileId ? 'stale' : x.voice?.status } } : {}),
+        ...(visualChanged && x.visual?.codeFileId ? { visual: { ...x.visual, status: 'stale' } } : {}),
+      }
+    }),
+  }))
   const move = (i, d) => setSession(s => { const a = [...s.scenes], j = i + d; if (j < 0 || j >= a.length) return s; [a[i], a[j]] = [a[j], a[i]]; return { ...s, scenes: a } })
   const remove = async i => { const scenes = session.scenes.filter((_, k) => k !== i), next = { ...session, scenes, current: scenes.some(x => x.id === session.current) ? session.current : scenes[0]?.id || 1 }; setSession(next); await autosave.flush(true, next); await garbageCollectAssets(session, next) }
   const add = async () => { if (!idea.trim() || !gem) return; setBusy('Adding scene…'); try { const id = Math.max(0, ...session.scenes.map(x => x.id)) + 1, item = await sceneAdd(gem, cfg, session.blueprint.plan, idea, id); setSession(s => ({ ...s, scenes: [...s.scenes, freshScene({ ...item, id }, s.scenes.length)] })); setIdea(''); await autosave.flush(true) } catch (e) { setError(e.message) } finally { setBusy('') } }
