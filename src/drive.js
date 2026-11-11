@@ -111,6 +111,13 @@ async function find(name, parent, mime) {
   if (parent) c.push(`'${parent}' in parents`); if (mime) c.push(`mimeType='${mime}'`)
   return (await api(`${D}/files?q=${enc(c.join(' and '))}&fields=files(id,name)`)).files[0]
 }
+export const getFile = id => api(`${D}/files/${enc(id)}?fields=id,name,mimeType,trashed`)
+export const deleteFile = id => api(`${D}/files/${enc(id)}`, { method: 'DELETE' })
+export async function deleteFolderTree(id) {
+  const query = enc(`'${id}' in parents and trashed=false`), children = (await api(`${D}/files?q=${query}&fields=files(id,mimeType)`)).files || []
+  for (const child of children) child.mimeType === FOLDER ? await deleteFolderTree(child.id) : await deleteFile(child.id)
+  await deleteFile(id)
+}
 const mkFolder = (name, parent) => api(`${D}/files?fields=id`, { method: 'POST', body: JSON.stringify({ name, mimeType: FOLDER, parents: parent ? [parent] : undefined }) })
 async function mkSheet(name, parent, tabs) {
   const cell = h => ({ userEnteredValue: { stringValue: h }, userEnteredFormat: { textFormat: { bold: true } } })

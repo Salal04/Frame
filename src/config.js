@@ -26,7 +26,7 @@ export const GLOBAL_DEFAULTS = {
   },
   limits: { rpm: 5, tts_rpm: 4, max_wait: 240, tts_group_scenes: 4, tts_group_chars: 4000, scene_batch: 4 },
   my_voices: [],                                 // cloned voices: [{ id: 'voice_...', name, model, lang, created }]. Only the ID is kept, never the recordings
-  tools: { urdu_font: 'Noto Naskh Arabic', workdir: 'build', output_dir: 'output', tts_cache_dir: 'tts_cache' },
+  tools: { urdu_font: 'Noto Naskh Arabic', workdir: 'build', output_dir: 'output', tts_cache_dir: 'tts_cache', actions_url: '' },
 }
 
 export const GLOBAL_FIELDS = [
@@ -41,7 +41,8 @@ export const GLOBAL_FIELDS = [
     ['tools.urdu_font', 'Urdu screen font', 'text', 'Must be installed on the machine that renders.'],
     ['tools.workdir', 'Work folder', 'text', 'Script, audio and clips while building.'],
     ['tools.output_dir', 'Output folder', 'text', 'A sub-folder per playlist is added.'],
-    ['tools.tts_cache_dir', 'TTS cache folder', 'text', 'Survives deleting the work folder.']]]]
+    ['tools.tts_cache_dir', 'TTS cache folder', 'text', 'Survives deleting the work folder.'],
+    ['tools.actions_url', 'GitHub Actions URL', 'text', 'Optional link shown after a Guided video is queued.']]]]
 
 export const LIST_PATHS = ['keys.gemini', 'keys.tts', 'keys.cloudTts', 'models.light', 'models.medium', 'models.code', 'models.tts', 'models.transcription']
 export const LIST_INFO = {
@@ -144,7 +145,7 @@ export const normStatus = s => {   // also understands the old words (Draft/Read
   if (/fail|error/.test(k)) return 'Failed'
   return 'Hold'
 }
-export const INPUT_TYPES = ['Prompt', 'Script', 'Source']   // Prompt = Frame writes the script from the topic. Script = you supply the finished script, used word for word. Source = you paste raw text (book, article, notes) and Frame adapts it.
+export const INPUT_TYPES = ['Prompt', 'Script', 'Source']   // Map is backend-only: guided Finish sets it and it is never offered in Add video.
 // What Frame may do with a Source text. 'custom' means the user's own instruction is the whole brief.
 export const SOURCE_MODES = [
   ['polish', 'Light polish', 'Keep the book\'s own words. Only clean it for speaking: remove page numbers, footnotes and headings, fix typos, split very long sentences. Almost no change.'],
@@ -156,7 +157,7 @@ export const SOURCE_MODE_KEYS = SOURCE_MODES.map(m => m[0])
 export const normSourceMode = s => { const k = String(s ?? '').trim().toLowerCase(); return SOURCE_MODE_KEYS.includes(k) ? k : (SOURCE_MODES.find(m => m[1].toLowerCase() === k)?.[0] || 'polish') }
 export const MAX_INSTRUCTION = 2000
 export const MAX_SCRIPT = 49000                    // one Google Sheets cell holds at most 50,000 characters
-export const normInput = s => /source|adapt|book|rewrite/i.test(String(s ?? '')) ? 'Source' : /script/i.test(String(s ?? '')) ? 'Script' : /voice|audio|record/i.test(String(s ?? '')) ? 'Voice' : 'Prompt'
+export const normInput = s => /\bmap\b|render map/i.test(String(s ?? '')) ? 'Map' : /source|adapt|book|rewrite/i.test(String(s ?? '')) ? 'Source' : /script/i.test(String(s ?? '')) ? 'Script' : /voice|audio|record/i.test(String(s ?? '')) ? 'Voice' : 'Prompt'
 export const STYLE_PRESETS = [
   'calm, clear and friendly, like a good teacher', 'upbeat and energetic, like a favourite YouTube explainer',
   'warm and slow, like a bedtime storyteller', 'serious and steady, like a documentary narrator',
@@ -178,7 +179,7 @@ export const ttsNote = m => /lite/.test(m) ? 'Lite: lighter, bigger free daily a
 
 // ---------------------------------------------------------------- playlist sheet (header name -> field)
 export const PLAYLIST_COLS = [
-  ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Script', 'script'], ['Source Mode', 'sourceMode'], ['Custom Instruction', 'instruction'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
+  ['#', 'order'], ['Video Title', 'title'], ['Topic / Prompt', 'topic'], ['Input Type', 'inputType'], ['Build Mode', 'buildMode'], ['Script', 'script'], ['Source Mode', 'sourceMode'], ['Custom Instruction', 'instruction'], ['Minutes', 'minutes'], ['Status', 'status'], ['Description', 'description'],
   ['Audience', 'audience'], ['Language', 'language'], ['Translate To', 'translateTo'], ['Screen Language', 'screen_language'], ['Aspect', 'aspect'], ['Voice', 'voice'], ['Engine', 'engine'], ['Engine Fixed', 'engineFixed'], ['Web Research', 'webResearch'],
   ['Thumbnail Text', 'thumbText'], ['Thumbnail Link', 'thumbLink'], ['Custom Clips (JSON)', 'clips'], ['B-roll (JSON)', 'broll'], ['Scenes (JSON)', 'scenes'], ['Extra Config (JSON)', 'extra'],
   ['Output Link', 'output'], ['Video Folder ID', 'folderId'], ['Input Folder ID', 'inputFolderId'], ['Output Folder ID', 'outputFolderId'], ['Video Folder Link', 'folderLink'], ['Notes', 'notes'], ['Updated', 'updated'], ['Own Voice (JSON)', 'voiceAudio']]
@@ -471,7 +472,7 @@ export function resolveJob(g, p, v, playlist) {
   const wr = String(v.webResearch ?? '').trim().toLowerCase(), research = wr ? !/^(0|false|no|n|off)$/.test(wr) : p.web_research !== false   // row > project > ON
   const cfg = {
     description: [dv, dp].filter(Boolean).join('\n\n'), description_video: dv, description_project: dp, thumbnail,
-    input_type: isVoice ? 'voice' : isSource ? 'source' : isScript ? 'script' : 'prompt', script: isScript ? v.script.trim() : '',
+    input_type: kind === 'Map' ? 'map' : isVoice ? 'voice' : isSource ? 'source' : isScript ? 'script' : 'prompt', script: isScript ? v.script.trim() : '',
     voice_audio: va ? { ...va, language: v.language || p.language } : undefined, transcription_models: isVoice ? csv(g.models.transcription).join(',') : '',   // the recording is transcribed by the backend
     source_text: isSource ? (v.script || '').trim() : '', source_mode: isSource ? sm : '',
     custom_instruction: (isSource || kind === 'Prompt') ? (v.instruction || '').trim() : '',
@@ -499,7 +500,7 @@ export function buildJobs(g, p, playlist, rows, all = false) {
   const gem = csv(g.keys.gemini), tts = csv(g.keys.tts).length ? csv(g.keys.tts) : gem
   return {
     playlist, exported: new Date().toISOString(), keys: { gemini: gem, tts, cloudTts: csv(g.keys.cloudTts) }, tts_cache_dir: g.tools.tts_cache_dir,
-    jobs: rows.filter(r => all || r.status === 'Waiting').map(r => ({ row: r.row, title: r.title, config: resolveJob(g, p, r, playlist) })),
+    jobs: rows.filter(r => (all || r.status === 'Waiting') && isBackendEligible(r)).map(r => ({ row: r.row, title: r.title, config: resolveJob(g, p, r, playlist) })),
   }
 }
 
@@ -534,7 +535,9 @@ export function buildQueue(plan, waiting) {
   if (out.length) out[out.length - 1].pauseAfterMin = 0
   return out
 }
-export const waitingOf = data => Object.fromEntries(data.map(d => [d.p.folderId, d.rows.filter(r => r.status === 'Waiting')]))
+export const isGuided = r => String(r.buildMode || '').toLowerCase() === 'guided'
+export const isBackendEligible = r => !isGuided(r) || normInput(r.inputType) === 'Map'
+export const waitingOf = data => Object.fromEntries(data.map(d => [d.p.folderId, d.rows.filter(r => r.status === 'Waiting' && isBackendEligible(r))]))
 export const countStatus = rows => Object.fromEntries(STATUSES.map(s => [s, rows.filter(r => r.status === s).length]))
 
 // production_record.json: what has been made, what is running, what comes next.

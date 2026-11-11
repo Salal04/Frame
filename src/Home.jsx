@@ -20,6 +20,7 @@ const FEATURES = [
   ['📅', 'Social', 'Choose finished videos, the days and how each is cut into reels. Frame picks the time.', '#8aa0ff'],
   ['🎨', 'Brand kit', 'Upload your logo once. It lands on every video and every platform.', '#ffb59a'],
   ['🎞️', 'Scenes', 'Keep clips or YouTube links, and tick off the scenes each video still needs.', '#7fe6c8'],
+  ['🧩', 'Guided builder', 'Write the script, approve each voice and scene, preview the full draft, then send a Render Map to the backend for final quality.', '#8aa0ff'],
   ['🎛️', 'Control room', 'Settings that apply to every playlist, kept private in your Drive.', '#ffd466'],
 ]
 const STARTERS = ['AI for Beginners', 'Daily Duas', 'Bedtime Stories']

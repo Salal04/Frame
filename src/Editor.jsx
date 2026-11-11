@@ -3,6 +3,8 @@ import * as G from './drive.js'
 import * as P from './playlist.js'
 import { Confirm } from './Classic.jsx'
 import { useVideoList, pairGet } from './ListTools.jsx'
+import GuidedPanel from './guided/GuidedPanel.jsx'
+import { fetchAsset } from './session.js'
 
 // Browser video editor (v2). Tracks: V1 main (video / image / text slides), V2 (videos placed anywhere, with position, size, opacity),
 // Text & logo layer (opacity, fade), and 3 audio tracks: Voice (clip sound + voiceover), Background, Effects.
@@ -138,9 +140,9 @@ function drawBox(ctx, el, sw, sh, o, W, H, alpha) {
 
 const Rng = ({ l, v, set, min, max, step = .01, u = '' }) => <label>{l}: <b>{+(+v).toFixed(2)}{u}</b><input type="range" min={min} max={max} step={step} value={v} onChange={e => set(+e.target.value)} /></label>
 
-export default function Editor({ w, run, start, onSocial }) {
+export default function Editor({ w, run, start, onSocial, guided }) {
   const [main, setMain] = useState([]), [v2, setV2] = useState([]), [ov, setOv] = useState([]), [aud, setAud] = useState([]), [subs, setSubs] = useState([]), [look, setLook] = useState(LOOK0), [trk, setTrk] = useState(TRK0)
-  const [sel, setSel] = useState(''), [tab, setTab] = useState('main'), [t, setT] = useState(0), [playing, setPlaying] = useState(false), [recording, setRecording] = useState(false)
+  const [sel, setSel] = useState(''), [tab, setTab] = useState(guided ? 'guide' : 'main'), [t, setT] = useState(0), [playing, setPlaying] = useState(false), [recording, setRecording] = useState(false)
   const [prog, setProg] = useState(null), [out, setOut] = useState(null), [list, setList] = useState(null), { shown: pickShown, bar: pickBar } = useVideoList(list?.items || [], { get: pairGet, label: 'videos' }), [link, setLink] = useState(''), [title, setTitle] = useState(start?.r?.title || '')
   const [saved, setSaved] = useState(null), [saveMode, setSaveMode] = useState('copy'), [ask, setAsk] = useState(null)   // saved = what happened in Drive: { mode: 'copy' | 'replace', link, id, row }
   const [pps, setPps] = useState(40), [snapOn, setSnapOn] = useState(true), [dropLane, setDropLane] = useState(''), [fileOver, setFileOver] = useState(false), [vd, setVd] = useState(null), [guideX, setGuideX] = useState(null)
@@ -154,6 +156,30 @@ export default function Editor({ w, run, start, onSocial }) {
   const snapNow = () => { const s = S.current; return { main: s.main, v2: s.v2, ov: s.ov, aud: s.aud, subs: s.subs, look: s.look, trk: s.trk } }
   const flush = () => { clearTimeout(HI.timer); const cur = snapNow(); if (!HI.stable) { HI.stable = cur; return } if (Object.keys(cur).some(k => cur[k] !== HI.stable[k])) { HI.past.push(HI.stable); if (HI.past.length > 80) HI.past.shift(); HI.future = []; HI.stable = cur } }
   useEffect(() => { if (!HI.stable) HI.stable = snapNow(); clearTimeout(HI.timer); HI.timer = setTimeout(flush, 400) }, [main, v2, ov, aud, subs, look, trk])
+  useEffect(() => { if (!guided) return; const timer = setTimeout(() => guided.setSession(s => ({ ...s, editor: { main, v2, ov, aud: aud.map(a => ({ ...a, url: a.assetId ? undefined : a.url })), subs, look, trk } })), 400); return () => clearTimeout(timer) }, [main, v2, ov, aud, subs, look, trk])
+  useEffect(() => {
+    if (!guided || guided.session.stage !== 'scenes') return
+    const scenes = guided.session.scenes.filter(s => s.voice?.status === 'approved' && s.voice.duration)
+    let alive = true, at = 0
+    const slides = scenes.map(s => ({ id: `guided-scene-${s.id}`, sceneId: s.id, kind: 'text', name: s.heading || `Scene ${s.id}`, text: s.heading || `Scene ${s.id}`, bg: '#101828', color: '#ffffff', font: 'Fredoka', size: .08, weight: 700, len: s.voice.duration + (s.visual?.tailSec ?? .4) }))
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x.id === b[i].id && x.len === b[i].len && x.text === b[i].text)
+    setMain(a => { const other = a.filter(x => !x.sceneId), current = a.filter(x => x.sceneId); return same(current, slides) ? a : [...other, ...slides] })
+    const offsets = new Map(), fileByScene = new Map()
+    slides.forEach(x => { offsets.set(x.sceneId, at); at += x.len })
+    scenes.forEach(s => fileByScene.set(s.id, s.voice.fileId))
+    setAud(a => {
+      let changed = false
+      const linked = a.filter(x => { const keep = !x.sceneId || fileByScene.get(x.sceneId) === x.assetId; if (!keep) changed = true; return keep })
+      const next = linked.map(x => { const offset = offsets.get(x.sceneId); if (offset === undefined || x.track !== 'voice' || x.at === offset) return x; changed = true; return { ...x, at: offset } })
+      return changed ? next : a
+    })
+    scenes.forEach(async s => {
+      if (!alive || aud.some(a => a.assetId === s.voice.fileId)) return
+      try { const blob = await fetchAsset(s.voice.fileId); if (alive) await addAudio(new File([blob], s.voice.name || `scene_${s.id}.wav`, { type: 'audio/wav' }), 'voice', offsets.get(s.id) || 0, s.voice.fileId, s.id, false) }
+      catch { /* Drive audio is retried when the session is reopened. */ }
+    })
+    return () => { alive = false }
+  }, [guided?.session.scenes])
   const restore = s => { setMain(s.main); setV2(s.v2); setOv(s.ov); setAud(s.aud); setSubs(s.subs); setLook(s.look); setTrk(s.trk) }
   const undo = () => { flush(); const p = HI.past.pop(); if (!p) return; HI.future.push(HI.stable); HI.stable = p; restore(p); setSel('') }
   const redo = () => { flush(); const n = HI.future.pop(); if (!n) return; HI.past.push(HI.stable); HI.stable = n; restore(n) }
@@ -298,9 +324,9 @@ export default function Editor({ w, run, start, onSocial }) {
   })
   const openList = target => run('Reading your projects…', async () => { const items = []; for (const p of [...await G.listProjects(w), w.singles]) (await P.loadVideos(p)).forEach(r => r.output && items.push({ p, r })); setList({ target, items }) })
   const addSlide = () => { const o = { id: uid(), kind: 'text', name: 'Text slide', text: 'Your text', bg: '#101828', color: '#ffffff', font: 'Fredoka', size: .08, weight: 700, len: 5 }; setMain(a => [...a, o]); setSel(o.id); setTab('main') }
-  const addAudio = async (file, track, at) => {
+  const addAudio = async (file, track, at, assetId = '', sceneId = null, focus = true) => {
     const url = URL.createObjectURL(file), el = mkEl(url, false); await meta(el); const id = uid(), bg = track === 'bg'; els.current[id] = el; const peaks = await peaksOf(file)
-    setAud(a => [...a, { id, track, name: file.name, url, peaks, dur: el.duration, at: +(at ?? (bg ? 0 : E.t)).toFixed(2), start: 0, end: el.duration, vol: bg ? .5 : 1, loop: bg }]); setSel(id); setTab('audio')
+    setAud(a => [...a, { id, assetId, sceneId, track, name: file.name, url, peaks, dur: el.duration, at: +(at ?? (bg ? 0 : E.t)).toFixed(2), start: 0, end: el.duration, vol: bg ? .5 : 1, loop: bg }]); if (focus) { setSel(id); setTab('audio') }
   }
   const pickAudio = e => { const f = e.target.files[0]; e.target.value = ''; if (f) run('Opening audio…', () => addAudio(f, audTrack.current)) }
   const addTrackFile = tr => { audTrack.current = tr; fa.current.click() }
@@ -540,6 +566,7 @@ export default function Editor({ w, run, start, onSocial }) {
   const dur = tm.total, d1 = Math.max(dur, .01), pct = x => `${x / d1 * 100}%`
   const mi = main.find(o => o.id === sel), vi = v2.find(o => o.id === sel), ai = aud.find(o => o.id === sel), so = ov.find(o => o.id === sel), mk = main.findIndex(o => o.id === sel)
   const TABS = [['main', '🎞 V1'], ['v2', '🎬 V2'], ['over', '🅣 Text'], ['look', '🎨 Look'], ['audio', '🎧 Audio'], ['subs', '💬 Subs'], ['exp', '⬇ Export']]
+  const GTABS = guided ? [['guide', 'Guide'], ...TABS] : TABS
   const ed = (k, v) => setLook(l => ({ ...l, [k]: v })), hasAny = main.length || v2.length || ov.length || aud.length
   const Pick = ({ target }) => list && list.target === target ? <div className="pick">{!list.items.length && <p className="muted">No video has an Output link yet.</p>}{pickBar}{list.items.length > 0 && !pickShown.length && <p className="muted">No video matches.</p>}{pickShown.map(({ p, r }) => <div className="row tight" key={p.folderId + r.row}><button className="ghost sm" onClick={() => fromDrive(r, target)}>{p.name}: {r.title}</button></div>)}</div> : null
   const Time = ({ o, set, a, b }) => <div className="cols"><label>Starts at (s)<input type="number" step=".1" min="0" value={+o[a].toFixed(1)} onChange={e => set({ [a]: +e.target.value })} /></label>{b && <label>Until (s)<input type="number" step=".1" min="0" value={+o[b].toFixed(1)} onChange={e => set({ [b]: +e.target.value })} /></label>}</div>
@@ -574,9 +601,10 @@ export default function Editor({ w, run, start, onSocial }) {
     <input ref={fm} type="file" accept="video/*,image/*" multiple hidden onChange={pickMedia('main')} /><input ref={f2} type="file" accept="video/*" multiple hidden onChange={pickMedia('v2')} /><input ref={fi} type="file" accept="image/*" hidden onChange={addImage} /><input ref={fa} type="file" accept="audio/*" hidden onChange={pickAudio} /><input ref={fs} type="file" accept=".srt" hidden onChange={pickSrt} />
     <div className="ex-top">
       <aside className="ex-left">
-        {!hasAny && <div className="panel"><h3>Start</h3><div className="row tight"><button className="cta sm" onClick={() => openList('main')}>Choose a completed video</button><button className="ghost" onClick={() => fm.current.click()}>Video or picture from my device</button><button className="ghost" onClick={addSlide}>Start with a text slide</button></div>{Pick({ target: 'main' })}</div>}
-        {hasAny && <>
-          <div className="ex-tabs">{TABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
+        {guided && tab === 'guide' && <GuidedPanel session={guided.session} status={guided.autosave.state} setSession={guided.setSession} autosave={guided.autosave} global={guided.global} folders={guided.folders} row={guided.row} playlist={guided.playlist} project={guided.project} onRow={guided.onRow} onEdit={guided.onEdit} onSocial={guided.onSocial} onClone={guided.onClone} onContinue={() => guided.setSession(s => ({ ...s, activeStep: null }))} onSkip={() => guided.setSession(s => ({ ...s, activeStep: null }))} />}
+        {!hasAny && tab !== 'guide' && <div className="panel"><h3>Start</h3><div className="row tight"><button className="cta sm" onClick={() => openList('main')}>Choose a completed video</button><button className="ghost" onClick={() => fm.current.click()}>Video or picture from my device</button><button className="ghost" onClick={addSlide}>Start with a text slide</button></div>{Pick({ target: 'main' })}</div>}
+        {(hasAny || guided) && <>
+          <div className="ex-tabs">{GTABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
       {tab === 'main' && <div className="panel"><div className="row tight"><button className="ghost sm" onClick={() => fm.current.click()}>Add video / picture</button><button className="ghost sm" onClick={() => openList('main')}>Add completed video</button><button className="ghost sm" onClick={addSlide}>Add text slide</button><button className="ghost sm" onClick={split}>Split at playhead</button></div>{Pick({ target: 'main' })}
         {mi ? <><h3>{mi.name}</h3><p className="hint">{mi.kind === 'video' ? 'Video' : mi.kind === 'image' ? 'Picture' : 'Text slide'} · item {mk + 1} of {main.length} · {fmt(idur(mi))} on the timeline</p>
           {mi.kind === 'video' && <><Rng l="Starts at" v={mi.start} min={0} max={mi.dur} step=".1" u=" s" set={v => updM(mi.id, { start: Math.min(v, mi.end - .2) })} /><Rng l="Ends at" v={mi.end} min={0} max={mi.dur} step=".1" u=" s" set={v => updM(mi.id, { end: Math.max(v, mi.start + .2) })} />

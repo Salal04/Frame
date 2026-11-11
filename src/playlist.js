@@ -1,6 +1,6 @@
 // Drive layer for the pipeline: JSON config files, the per-playlist "Playlist" sheet, thumbnails.
 import * as G from './drive.js'
-import { canRetry, MAX_BROLL_FILES, parseBroll, brollFor, normLangs, PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, voiceAudioFor, isAudioFile, clipsFor, scenesFor, detectSceneEngine, SCENE_FILE_RE, analyzeTable, importRows, buildQueue, waitingOf, makeRecord } from './config.js'
+import { canRetry, MAX_BROLL_FILES, parseBroll, brollFor, normLangs, PLAYLIST_COLS, PROJECT_DEFAULTS, GLOBAL_DEFAULTS, STATUSES, USER_STATUSES, isLocked, canUserSet, mergeDeep, normStatus, normInput, voiceAudioFor, isAudioFile, clipsFor, scenesFor, detectSceneEngine, SCENE_FILE_RE, analyzeTable, importRows, buildQueue, waitingOf, makeRecord, isBackendEligible } from './config.js'
 const { api, find, ensureFolder, put, read, append, log, safe, now, upload, delRow, getToken, enc, D, S } = G
 const mkFolder = (name, parent) => api(`${D}/files?fields=id`, { method: 'POST', body: JSON.stringify({ name, mimeType: G.FOLDER, parents: [parent] }) })
 const auth = () => ({ Authorization: `Bearer ${getToken()}` })
@@ -100,12 +100,12 @@ async function putText(parent, name, text, type = 'text/plain') {
 }
 // the input side of the folder: a plain snapshot of what the user typed, so the folder is self-contained
 async function writeInput(o) {
-  const isScript = o.inputType === 'Script', isSource = o.inputType === 'Source', isVoice = o.inputType === 'Voice' && !!voiceAudioFor(o, true)
-  const input = { title: o.title, input_type: isVoice ? 'voice' : isSource ? 'source' : isScript ? 'script' : 'prompt', voice_audio: isVoice ? voiceAudioFor(o, true) : null, topic: o.topic || '', script: isScript ? o.script || '' : '', source_text: isSource ? o.script || '' : '', source_mode: isSource ? o.sourceMode || 'polish' : '', custom_instruction: o.instruction || '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', translate_to: normLangs(o.translateTo), screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', custom_clips: clipsFor(o), broll: brollFor(o) || null, custom_scenes: scenesFor(o), extra: o.extra || '', saved: now() }
+  const isScript = o.inputType === 'Script', isSource = o.inputType === 'Source', isMap = o.inputType === 'Map', isVoice = o.inputType === 'Voice' && !!voiceAudioFor(o, true)
+  const input = { title: o.title, input_type: isMap ? 'map' : isVoice ? 'voice' : isSource ? 'source' : isScript ? 'script' : 'prompt', voice_audio: isVoice ? voiceAudioFor(o, true) : null, topic: o.topic || '', script: isScript ? o.script || '' : '', source_text: isSource ? o.script || '' : '', source_mode: isSource ? o.sourceMode || 'polish' : '', custom_instruction: o.instruction || '', minutes: o.minutes || '', description: o.description || '', audience: o.audience || '', language: o.language || '', translate_to: normLangs(o.translateTo), screen_language: o.screen_language || '', aspect: o.aspect || '', voice: o.voice || '', engine: o.engine || '', thumbnail_text: o.thumbText || '', thumbnail_link: o.thumbLink || '', custom_clips: clipsFor(o), broll: brollFor(o) || null, custom_scenes: scenesFor(o), extra: o.extra || '', saved: now() }
   await putText(o.inputFolderId, 'input.json', JSON.stringify(input, null, 2), 'application/json')
   if (isScript) await putText(o.inputFolderId, 'script.txt', o.script || '')
   else if (isSource) await putText(o.inputFolderId, 'source.txt', o.script || '')
-  else if (!isVoice) await putText(o.inputFolderId, 'prompt.txt', o.topic || o.title || '')
+  else if (!isVoice && !isMap) await putText(o.inputFolderId, 'prompt.txt', o.topic || o.title || '')
   if ((o.description || '').trim()) await putText(o.inputFolderId, 'description.txt', o.description)
 }
 
@@ -139,22 +139,42 @@ export async function saveVideo(p, o, opts = {}) {
 // a Waiting video must have its folder before the backend can write into it: build the missing ones, then the caller reloads
 export async function prepareFolders(p, rows) {
   let n = 0
-  for (const r of rows) if (r.status === 'Waiting' && !(r.folderId && r.inputFolderId && r.outputFolderId)) { await saveVideo(p, r); n++ }
+  for (const r of rows) if (r.status === 'Waiting' && isBackendEligible(r) && !(r.folderId && r.inputFolderId && r.outputFolderId)) { await saveVideo(p, r); n++ }
   return n
 }
 // Hold -> Waiting for many videos at once (the user releases them to the backend)
 export async function releaseAll(p, rows) {
   let n = 0
-  for (const r of rows) if (r.status === 'Hold') { await saveVideo(p, { ...r, status: 'Waiting' }); n++ }
+  for (const r of rows) if (r.status === 'Hold' && isBackendEligible(r)) { await saveVideo(p, { ...r, status: 'Waiting' }); n++ }
   return n
 }
 // Failed -> Waiting for many videos at once (the backend resumes each one from its checkpoint)
 export async function retryAllFailed(p, rows) {
   let n = 0
-  for (const r of rows) if (r.status === 'Failed') { await saveVideo(p, { ...r, status: 'Waiting' }); n++ }
+  for (const r of rows) if (r.status === 'Failed' && isBackendEligible(r)) { await saveVideo(p, { ...r, status: 'Waiting' }); n++ }
   return n
 }
-export async function deleteVideo(p, o) { await delRow(p.sheetId, p.tabId, o.row - 2); await log(p.sheetId, 'Video removed', o.title) }
+
+// The one permitted transition from a guided browser session to a backend job.
+export async function sendGuidedRenderMap(p, row, renderMap) {
+  if (!renderMap || renderMap.version !== 1 || !Array.isArray(renderMap.scenes) || !renderMap.scenes.length) throw new Error('A valid Render Map with at least one scene is required.')
+  if (String(row.buildMode || '').toLowerCase() !== 'guided') throw new Error('Only a guided video can be sent with a Render Map.')
+  if (row.row) {
+    const col = colL(p.head.indexOf('Status')), live = normStatus((await read(p.sheetId, `Playlist!${col}${row.row}`))[0]?.[0])
+    if (live !== 'Hold' && live !== 'Failed') throw new Error(`This video is ${live}; only a guided video on Hold or Failed can be sent.`)
+  }
+  const ids = await ensureVideoFolder(p, row), next = { ...row, ...ids, inputType: 'Map', buildMode: 'guided', status: 'Waiting' }
+  await putText(next.inputFolderId, 'render_map.json', JSON.stringify(renderMap, null, 2), 'application/json')
+  await saveVideo(p, next)
+  return next
+}
+export async function deleteVideo(p, o) {
+  if (String(o.buildMode || '').toLowerCase() === 'guided' && o.folderId) {
+    const session = await find('Session', o.folderId, G.FOLDER)
+    if (session) await G.deleteFolderTree(session.id)
+  }
+  await delRow(p.sheetId, p.tabId, o.row - 2); await log(p.sheetId, 'Video removed', o.title)
+}
 
 // results written by run_from_frame.py (frame_results.json)
 export async function importResults(p, rows, results) {

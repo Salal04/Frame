@@ -32,7 +32,7 @@ function SourceOptions({ mode, instruction, onMode, onInstruction }) {
   </div></Fold>
 }
 
-function Row({ r, g, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, setUi }) {
+function Row({ r, g, cfg, p, run, reload, gotoThumb, gotoEdit, gotoGuided, ask, single, ui, setUi }) {
   const [e, setE] = useState(r), open = !!ui.rowOpen, setOpen = v => setUi(x => ({ ...x, rowOpen: v })), tf = useRef(), sf = useRef(), up = k => ev => setE({ ...e, [k]: ev.target.value })
   const va = parseVoiceAudio(e.voiceAudio), hasVa = hasVoiceFile(va)
   const setVa = patch => setE(c => ({ ...c, voiceAudio: stringifyVoiceAudio({ ...parseVoiceAudio(c.voiceAudio), ...patch }) }))
@@ -54,12 +54,14 @@ function Row({ r, g, cfg, p, run, reload, gotoThumb, gotoEdit, ask, single, ui, 
   return <div className={'card video ' + cls(r.status)}>
     <div className="vhead" onClick={() => setOpen(!open)}><span className="num">{r.order || r.row - 1}</span>
       <div><h3>{r.title}</h3><small className="muted">{r.inputType === 'Script' ? 'own script' : r.inputType === 'Voice' ? 'own voice recording' : r.inputType === 'Source' ? 'source text · ' + (SOURCE_MODES.find(m => m[0] === normSourceMode(r.sourceMode))?.[1] || '').toLowerCase() : 'prompt'} · {r.minutes || (r.inputType === 'Script' ? 'length from script' : r.inputType === 'Voice' ? 'length from recording' : cfg.minutes + ' min')}{r.minutes ? ' min' : ''} · {normAspect(r.aspect) ? r.aspect + ' (own)' : (normAspect(cfg.aspect) || '16:9') + ' (project)'} · {enginePhrase(r.engine, r.engineFixed, cfg.engine, cfg.engine_fixed)} · {r.thumbLink ? 'own thumbnail' : 'default thumbnail'} · {single ? (r.description ? 'own description' : 'no description') : (r.description ? 'own description + project description' : 'project description')}</small></div>
-      <span className="pill">{r.status}</span></div>
+      {r.buildMode === 'guided' && <span className="pill">Guided build</span>}<span className="pill">{r.status}</span></div>
     {open && <div className="vbody">
       <Blocks stamp={e} save={() => save()} ctl={[{ open: ui.blk === undefined ? null : ui.blk, done: ui.done || {} }, f => setUi(x => { const n = f({ open: x.blk === undefined ? null : x.blk, done: x.done || {} }); return { ...x, blk: n.open, done: n.done } })]} items={[
         { id: 'status', title: 'Status and folder', note: r.status, noSave: true, body: <>
       <div className="statusbox">
-        {isLocked(r.status)
+        {r.buildMode === 'guided'
+          ? <><p className="muted"><b>Guided build</b>: this video stays out of the backend queue until you finish its Render Map.</p><button className="cta sm" onClick={() => gotoGuided(r)}>Open guided builder</button></>
+          : isLocked(r.status)
           ? <><p className="muted">🔒 <b>{r.status}</b>: the backend has taken this video, so its status can no longer be changed here.</p>
               {r.status === 'Failed' && <><button className="cta sm" onClick={() => back({ status: 'Waiting' }, 'Sending back to the backend…')}>↻ Retry: back to Waiting</button><small className="hint">The backend continues from its saved progress, so finished steps are not repeated.</small></>}</>
           : <><div className="seg tabs">{[['Hold', 'Hold (backend must not start it)'], ['Waiting', 'Waiting (backend may start it)']].map(([k, l]) => <button key={k} className={r.status === k ? 'on' : ''} disabled={r.status === k} onClick={() => back({ status: k }, k === 'Waiting' ? 'Releasing to the backend…' : 'Putting on Hold…')}>{l}</button>)}</div>
@@ -146,16 +148,16 @@ function SheetImport({ p, rows, run, reload }) {
 
 const BLANK = { mode: 'Prompt', title: '', topic: '', script: '', minutes: '', sourceMode: 'polish', instruction: '', sceneText: '', voiceFile: null, voiceSecs: null, voiceUse: 'as_is' }
 
-export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb, gotoEdit, single }) {
-  const [nt, setNt] = useState(BLANK), [del, setDel] = useState(null), [ui, setUi] = useState({}), f = useRef(), sf = useRef()
+export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb, gotoEdit, gotoGuided, single }) {
+  const [nt, setNt] = useState(BLANK), [buildMode, setBuildMode] = useState('auto'), [del, setDel] = useState(null), [ui, setUi] = useState({}), f = useRef(), sf = useRef()
   const reload = async () => setRows(await P.loadVideos(p))
   const total = rows.reduce((a, r) => a + (+r.minutes || +cfg.minutes || 0), 0), noOwn = rows.filter(r => !r.thumbLink).length, t = cfg.thumb || {}
-  const n = s => rows.filter(r => r.status === s).length
+  const n = s => rows.filter(r => r.status === s && (s === 'Hold' || s === 'Waiting' ? r.buildMode !== 'guided' : true)).length
   const { shown, bar } = useVideoList(rows, { get: rowGet(cfg), withProject: false })
   const waitMin = rows.filter(r => r.status === 'Waiting').reduce((a, r) => { const e = estimateRender({ minutes: +r.minutes || +cfg.minutes || 3, scene_sec: cfg.scene_sec, quality: cfg.quality, max_scenes: cfg.max_scenes, engine: normEngine(r.engine) || normEngine(cfg.engine) || 'auto' }); return [a[0] + e.sec[0] / 60, a[1] + e.sec[1] / 60] }, [0, 0])
   const fmtT = m => m >= 90 ? `${Math.round(m / 6) / 10} h` : `${Math.round(m)} min`
   const add = () => {
-    const ti = nt.title.trim(), tp = nt.topic.trim(), sc = nt.script.trim(), isScript = nt.mode === 'Script', isSource = nt.mode === 'Source', isVoice = nt.mode === 'Voice', ins = nt.instruction.trim()
+    const ti = nt.title.trim(), tp = nt.topic.trim(), sc = nt.script.trim(), isScript = nt.mode === 'Script', isSource = nt.mode === 'Source', isVoice = nt.mode === 'Voice', guided = buildMode === 'guided' && !isVoice, ins = nt.instruction.trim()
     if (isVoice ? !nt.voiceFile : isSource ? (nt.sourceMode === 'custom' ? !ins : !sc) : isScript ? !sc : (!ti && !tp)) return
     const sceneStr = isScript || isSource || isVoice ? stringifyScenes(parseSceneText(nt.sceneText)) : ''   // scene descriptions only travel with a script or a source text
     run(single ? 'Adding the video…' : 'Adding to the playlist…', async () => {
@@ -166,11 +168,14 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
         await P.saveVideo(p, { ...base, ...ids, voiceAudio: stringifyVoiceAudio({ ...audio, enabled: true, use: nt.voiceUse }) })
         setNt({ ...BLANK, mode: nt.mode }); await reload(); return
       }
-      await P.saveVideo(p, isSource
+      const item = isSource
         ? { order: rows.length + 1, title: ti || sc.slice(0, 60) || ins.slice(0, 60), topic: '', inputType: 'Source', script: sc, sourceMode: nt.sourceMode, instruction: ins, minutes: nt.minutes, status: 'Hold', scenes: sceneStr }
         : isScript
         ? { order: rows.length + 1, title: ti || sc.slice(0, 60), topic: '', inputType: 'Script', script: sc, minutes: nt.minutes, status: 'Hold', scenes: sceneStr }
-        : { order: rows.length + 1, title: ti || tp.slice(0, 60), topic: tp || ti, inputType: 'Prompt', script: '', instruction: ins, minutes: nt.minutes || cfg.minutes, status: 'Hold' })
+        : { order: rows.length + 1, title: ti || tp.slice(0, 60), topic: tp || ti, inputType: 'Prompt', script: '', instruction: ins, minutes: nt.minutes || cfg.minutes, status: 'Hold' }
+      const ids = guided ? await P.ensureVideoFolder(p, item) : {}
+      await P.saveVideo(p, { ...item, ...ids, buildMode: guided ? 'guided' : 'auto' })
+      if (guided) { const made = (await P.loadVideos(p)).find(x => x.title === item.title); if (made) { gotoGuided(made); return } }
       setNt({ ...BLANK, mode: nt.mode }); await reload() })
   }
   const pickScript = ev => { const x = ev.target.files[0]; ev.target.value = ''; if (x) run('Reading the script…', async () => { const t = await G.readTextFile(x); tooLong(t); setNt(c => ({ ...c, mode: c.mode === 'Source' ? 'Source' : 'Script', script: t, title: c.title || x.name.replace(/\.[^.]+$/, '') })) }) }
@@ -186,22 +191,23 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
     {noOwn > 0 && <p className="note">{noOwn} video{noOwn > 1 ? 's have' : ' has'} no thumbnail of its own, so the default template {t.templateName ? <b>{t.templateName}</b> : <b>(none uploaded yet, a plain background is used)</b>} is used and the backend writes the title on it. <button className="link" onClick={() => gotoThumb('')}>Set the default template</button></p>}
     <Fold title="Add a video" note="prompt, text or script">
     <div className="seg tabs">{[['Prompt', 'From a prompt'], ['Source', 'I have text (book, notes)'], ['Script', 'I have a finished script'], ['Voice', 'I have my own voice recording']].map(([k, l]) => <button key={k} className={nt.mode === k ? 'on' : ''} onClick={() => setNt({ ...nt, mode: k })}>{l}</button>)}</div>
+    {nt.mode !== 'Voice' && <fieldset><legend>How should this video be built?</legend><label className="chk"><input type="radio" checked={buildMode === 'auto'} onChange={() => setBuildMode('auto')} /> Auto — the backend builds it for me</label><label className="chk"><input type="radio" checked={buildMode === 'guided'} onChange={() => setBuildMode('guided')} /> Guided — build it here, step by step</label></fieldset>}
     <p className="hint">New videos start on <b>Hold</b>: the backend will not touch them until you set them to Waiting.</p>
     <p className="hint">{nt.mode === 'Prompt' ? 'Give a topic and Frame writes the script, then makes the video.' : nt.mode === 'Source' ? 'Paste text as it is, for example from a book. You choose how much Frame may change it.' : nt.mode === 'Voice' ? 'Record yourself or upload an audio file. What you say is the script; the backend types it out and makes the video.' : 'Paste or upload your finished script. Frame uses it as written and only makes the video.'}</p>
     <div className="row add"><input value={nt.title} onChange={e => setNt({ ...nt, title: e.target.value })} placeholder="Video title" />
       {nt.mode === 'Prompt' && <input value={nt.topic} onChange={e => setNt({ ...nt, topic: e.target.value })} placeholder="Topic or prompt for the pipeline" />}
       <input className="mini" type="number" min="0.5" step="0.5" value={nt.minutes} onChange={e => setNt({ ...nt, minutes: e.target.value })} placeholder={nt.mode === 'Script' || nt.mode === 'Voice' ? 'auto' : `${cfg.minutes} min`} />
-      {nt.mode === 'Prompt' && <button className="cta sm" onClick={add}>Add video</button>}</div>
+      {nt.mode === 'Prompt' && <button className="cta sm" onClick={add}>{buildMode === 'guided' ? 'Add and start building' : 'Add video'}</button>}</div>
     {nt.mode === 'Prompt' && <input value={nt.instruction} maxLength={MAX_INSTRUCTION} onChange={e => setNt({ ...nt, instruction: e.target.value })} placeholder="Extra instruction (optional), e.g. start with a story" />}
     {nt.mode === 'Source' && <><textarea rows={7} value={nt.script} onChange={e => setNt({ ...nt, script: e.target.value })} placeholder="Paste the text here, straight from the book or article, or upload a file." />
       <SourceOptions mode={nt.sourceMode} instruction={nt.instruction} onMode={k => setNt({ ...nt, sourceMode: k })} onInstruction={v => setNt({ ...nt, instruction: v })} />
       <SceneDraft text={nt.sceneText} onText={v => setNt(c => ({ ...c, sceneText: v }))} run={run} />
       <div className="row"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost" onClick={() => sf.current.click()}>Upload text file</button>
-        <small className="muted">{nt.script.length.toLocaleString()} characters</small><button className="cta sm" disabled={nt.sourceMode === 'custom' ? !nt.instruction.trim() : !nt.script.trim()} onClick={add}>Add video</button></div></>}
+        <small className="muted">{nt.script.length.toLocaleString()} characters</small><button className="cta sm" disabled={nt.sourceMode === 'custom' ? !nt.instruction.trim() : !nt.script.trim()} onClick={add}>{buildMode === 'guided' ? 'Add and start building' : 'Add video'}</button></div></>}
     {nt.mode === 'Script' && <><textarea rows={7} value={nt.script} onChange={e => setNt({ ...nt, script: e.target.value })} placeholder="Paste the full script here, or upload a file." />
       <SceneDraft text={nt.sceneText} onText={v => setNt(c => ({ ...c, sceneText: v }))} run={run} />
       <div className="row"><input ref={sf} type="file" accept=".txt,.md,.srt,.pdf,.docx,.doc,.rtf,.odt" hidden onChange={pickScript} /><button className="ghost" onClick={() => sf.current.click()}>Upload script file</button>
-        <small className="muted">{nt.script.length.toLocaleString()} characters · .txt, .md, .pdf, .docx, .doc, .rtf, .odt</small><button className="cta sm" disabled={!nt.script.trim()} onClick={add}>Add video</button></div></>}
+        <small className="muted">{nt.script.length.toLocaleString()} characters · .txt, .md, .pdf, .docx, .doc, .rtf, .odt</small><button className="cta sm" disabled={!nt.script.trim()} onClick={add}>{buildMode === 'guided' ? 'Add and start building' : 'Add video'}</button></div></>}
     {nt.mode === 'Voice' && <><VoiceUpload run={run} busy="Reading the recording…" value={nt.voiceFile ? { name: nt.voiceFile.name, seconds: nt.voiceSecs } : null}
         onPick={(file, secs) => setNt(c => ({ ...c, voiceFile: file, voiceSecs: secs, title: c.title || file.name.replace(/\.[^.]+$/, '') }))} onClear={() => setNt(c => ({ ...c, voiceFile: null, voiceSecs: null }))} />
       <UseSelect value={nt.voiceUse} onChange={k => setNt(c => ({ ...c, voiceUse: k }))} />
@@ -219,7 +225,7 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
     <div className="cards one">{!rows.length && <p className="muted">No videos yet. Add the first prompt or script above, upload a sheet, or type rows straight into the Playlist sheet.</p>}
       {bar}
       {rows.length > 0 && !shown.length && <p className="muted">No video matches the search or filter. Press Reset above.</p>}
-      {shown.map(r => <Row g={g} key={[r.row, r.title, r.status, r.thumbLink].join('|')} ui={ui[r.row] || {}} setUi={f => setUi(u => ({ ...u, [r.row]: f(u[r.row] || {}) }))} single={single} r={r} cfg={cfg} p={p} run={run} reload={reload} gotoThumb={gotoThumb} gotoEdit={gotoEdit} ask={setDel} />)}</div>
-    {del && <Confirm title={`Remove “${del.title}”?`} text="The row is deleted from the Playlist sheet. The video's Drive folder (Input / Output) stays." yes="Remove" onYes={() => run('Removing…', async () => { await P.deleteVideo(p, del); setDel(null); await reload() })} onNo={() => setDel(null)} />}
+      {shown.map(r => <Row g={g} key={[r.row, r.title, r.status, r.thumbLink].join('|')} ui={ui[r.row] || {}} setUi={f => setUi(u => ({ ...u, [r.row]: f(u[r.row] || {}) }))} single={single} r={r} cfg={cfg} p={p} run={run} reload={reload} gotoThumb={gotoThumb} gotoEdit={gotoEdit} gotoGuided={gotoGuided} ask={setDel} />)}</div>
+    {del && <Confirm title={`Remove “${del.title}”?`} text={del.buildMode === 'guided' ? 'The row is removed and its Guided Session folder, including saved drafts, voices, and scene code, is deleted.' : "The row is deleted from the Playlist sheet. The video's Drive folder (Input / Output) stays."} yes="Remove" onYes={() => run('Removing…', async () => { await P.deleteVideo(p, del); setDel(null); await reload() })} onNo={() => setDel(null)} />}
   </section>
 }

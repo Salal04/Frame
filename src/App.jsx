@@ -15,6 +15,9 @@ import Prompts from './Prompts.jsx'
 import Summary from './Summary.jsx'
 import Voices from './Voices.jsx'
 import { pushDraft, clearDraft } from './draft.js'
+import { createSession, loadSession, saveSession, readLocal, SessionConflict } from './session.js'
+import { useAutosave } from './autosave.js'
+import GuidedPanel from './guided/GuidedPanel.jsx'
 
 
 export default function App() {
@@ -50,9 +53,10 @@ export default function App() {
     {busy && <div className="bar"><span />{busy}</div>}
     {err && <div className="err" role="alert" onClick={() => setErr('')}>{err}</div>}
     {view.t === 'home' && <Playlists w={w} run={run} open={p => setView({ t: 'playlist', p })} />}
-    {view.t === 'playlist' && <Playlist key={view.p.folderId} w={w} p={view.p} run={run} back={() => setView({ t: 'home' })} onEdit={(p, r) => setView({ t: 'editor', p, r })} onVoices={() => setView({ t: 'voices' })} />}
-    {view.t === 'singles' && <Playlist key="singles" w={w} p={w.singles} single run={run} onEdit={(p, r) => setView({ t: 'editor', p, r })} onVoices={() => setView({ t: 'voices' })} />}
+    {view.t === 'playlist' && <Playlist key={view.p.folderId} w={w} p={view.p} run={run} back={() => setView({ t: 'home' })} onEdit={(p, r) => setView({ t: 'editor', p, r })} onGuided={(p, r, cfg) => setView({ t: 'guided', p, r, cfg })} onVoices={() => setView({ t: 'voices' })} />}
+    {view.t === 'singles' && <Playlist key="singles" w={w} p={w.singles} single run={run} onEdit={(p, r) => setView({ t: 'editor', p, r })} onGuided={(p, r, cfg) => setView({ t: 'guided', p, r, cfg })} onVoices={() => setView({ t: 'voices' })} />}
     {view.t === 'editor' && <Editor key={view.r ? view.r.row + view.p.folderId : 'new'} w={w} run={run} start={view.r ? { p: view.p, r: view.r } : null} onSocial={key => setView({ t: 'social', pick: key })} />}
+    {view.t === 'guided' && <GuidedEditor w={w} run={run} p={view.p} r={view.r} cfg={view.cfg} onEdit={(p, r) => setView({ t: 'editor', p, r })} onSocial={key => setView({ t: 'social', pick: key })} />}
     {view.t === 'production' && <Production w={w} run={run} />}
     {view.t === 'summary' && <Summary w={w} run={run} />}
     {view.t === 'voices' && <Voices w={w} run={run} />}
@@ -128,7 +132,30 @@ function Playlists({ w, run, open }) {
   </main>
 }
 
-function Playlist({ w, p, run, back, single, onEdit, onVoices }) {
+function GuidedEditor({ w, run, p, r, cfg, onEdit, onSocial }) {
+  const [loaded, setLoaded] = useState(null), [session, setSession] = useState(null), [restore, setRestore] = useState(null), [rowState, setRowState] = useState(r), [conflict, setConflict] = useState(false)
+  useEffect(() => { run('Opening guided builder…', async () => { const got = await loadSession(p, r, cfg); if (!got.exists) { const made = await createSession(p, { ...r, ...got.folders.ids }, cfg); setLoaded(made.folders); setSession(made.session); return } setLoaded(got.folders); const local = await readLocal(`${p.folderId}:${r.row}`); if (local && (local.rev > got.session.rev || local.savedAt > got.session.savedAt)) setRestore(local); setSession(got.session) }) }, [])
+  useEffect(() => { if (!['Waiting', 'In Process'].includes(rowState?.status)) return; let active = true; const reload = () => P.loadVideos(p).then(rows => { if (active) setRowState(rows.find(x => x.row === rowState.row) || rowState) }).catch(() => {}); const timer = setInterval(reload, 30000); addEventListener('focus', reload); return () => { active = false; clearInterval(timer); removeEventListener('focus', reload) } }, [p, rowState?.row, rowState?.status])
+  const auto = useAutosave(session || { rev: 0 }, async s => { try { const next = await saveSession(loaded, s); setSession(next); return next } catch (e) { if (e instanceof SessionConflict) setConflict(true); throw e } }, `${p.folderId}:${rowState?.row || r.row}`)
+  const reloadConflict = async () => { const got = await loadSession(p, rowState, cfg); setLoaded(got.folders); setSession(got.session); setConflict(false) }
+  const overwriteConflict = async () => { const next = await saveSession(loaded, session, { force: true }); setSession(next); setConflict(false) }
+  const cloneSession = () => run('Making a new version…', async () => {
+    const rows = await P.loadVideos(p), title = `${session.title || r.title} (new version)`, order = rows.reduce((n, x) => Math.max(n, +x.order || 0, x.row - 1), 0) + 1
+    await P.saveVideo(p, { order, title, topic: session.title, inputType: ['Script', 'Source'].includes(session.inputType) ? session.inputType : 'Prompt', script: session.sourceText || '', sourceMode: session.inputType === 'Source' ? r.sourceMode : '', minutes: session.settings.minutes, audience: session.settings.audience, language: session.settings.language, screen_language: session.settings.screen_language, aspect: session.settings.aspect, status: 'Hold', buildMode: 'guided' })
+    const madeRow = (await P.loadVideos(p)).filter(x => x.title === title).at(-1)
+    if (!madeRow) throw new Error('The new video row was created, but could not be reopened.')
+    const made = await createSession(p, madeRow, cfg), copy = { ...session, rev: 0, savedAt: new Date().toISOString(), videoRow: madeRow.row, title, stage: session.scenes.length ? 'scenes' : 'blueprint', activeStep: null, submittedMaps: session.submittedMaps || [], backend: null }
+    const saved = await saveSession(made.folders, copy, { force: true }); setLoaded(made.folders); setSession(saved); setRowState(madeRow); setRestore(null)
+  })
+  if (!session || !loaded) return <main className="page"><p>Opening guided builder…</p></main>
+  const guided = { session, setSession, autosave: auto, global: w.g.cfg, folders: loaded, row: rowState, playlist: p, project: cfg, onRow: setRowState, onEdit, onSocial, onClone: cloneSession }
+  const view = ['Waiting', 'In Process', 'Completed'].includes(rowState.status)
+    ? <main className="page"><GuidedPanel {...guided} status={auto.state} /></main>
+    : <Editor w={w} run={run} start={{ p, r: rowState }} guided={guided} onSocial={onSocial} />
+  return <>{view}{restore && <div className="err">Unsaved work from this browser is newer. <button onClick={() => { setSession(restore); setRestore(null) }}>Restore unsaved work</button><button onClick={() => setRestore(null)}>Use Drive version</button></div>}{conflict && <div className="err"><b>This session changed in another tab.</b> Reload that version or deliberately overwrite it. <button className="ghost sm" onClick={reloadConflict}>Reload remote</button><button className="ghost sm" onClick={overwriteConflict}>Overwrite remote</button></div>}</>
+}
+
+function Playlist({ w, p, run, back, single, onEdit, onGuided, onVoices }) {
   const [tab, setTab] = useState('videos'), [cfg, setCfg] = useState(null), [rows, setRows] = useState(null), [focus, setFocus] = useState('')
   useEffect(() => { run('Opening playlist…', async () => { const c = await P.loadProject(p); setRows(await P.loadVideos(p)); setCfg(c) }) }, [])
   const save = async next => { await P.saveProject(p, next); setCfg(next) }
@@ -136,7 +163,7 @@ function Playlist({ w, p, run, back, single, onEdit, onVoices }) {
   return <main className="page">{!single && <button className="ghost" onClick={back}>← All playlists</button>}<h2>{p.name}</h2>{single && <p className="muted">Stand-alone videos. No playlist, so no shared description: each video stands on its own.</p>}
     {cfg && rows && <>
       <div className="seg tabs">{tabs.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
-      {tab === 'videos' && <Videos single={single} p={p} g={w.g.cfg} cfg={cfg} name={p.name} rows={rows} setRows={setRows} run={run} gotoThumb={r => { setFocus(r); setTab('thumb') }} gotoEdit={r => onEdit(p, r)} />}
+      {tab === 'videos' && <Videos single={single} p={p} g={w.g.cfg} cfg={cfg} name={p.name} rows={rows} setRows={setRows} run={run} gotoThumb={r => { setFocus(r); setTab('thumb') }} gotoEdit={r => onEdit(p, r)} gotoGuided={r => onGuided(p, r, cfg)} />}
       {tab === 'narrator' && <Narrator cfg={cfg} save={save} g={w.g.cfg} run={run} onVoices={onVoices} />}
       {tab === 'thumb' && <ThumbStudio focus={focus} p={p} cfg={cfg} save={save} rows={rows} setRows={setRows} run={run} />}
       {tab === 'settings' && <ProjectSettings single={single} cfg={cfg} save={save} run={run} />}

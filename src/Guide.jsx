@@ -19,6 +19,7 @@ export default function Guide() {
   return <main className="page">
     <h2>Guides</h2>
     <p className="muted">New here? Read the Setup Guide first, then keep the Usage Guide open while you work.</p>
+    <section id="guided"><h3>Guided builder</h3><p className="muted">Auto mode sends a prompt, script, or source to the backend. Guided mode builds the script, voice, and scene draft in your browser for review. When every scene is approved, Finish sends a Render Map and Drive asset links to the backend; the backend renders the final video and updates the row to Completed or Failed.</p><p className="muted">Use a recent Chrome or Edge for the sandboxed draft preview. Keep the tab in the foreground while reviewing animations. The final-quality render runs on the backend and does not depend on the browser staying open.</p></section>
     <div className="cards">
       {DOCS.map(([title, text, url]) => <div className="card" key={url}>
         <h3>{title}</h3>
