@@ -12,5 +12,4 @@ export default function SceneManager({ session, setSession, autosave }) {
     <ol>{session.scenes.map((s, i) => <li key={s.id}><b>{s.heading || `Scene ${s.id}`}</b> <small className="muted">voice {s.voice?.status || 'none'} - visual {s.visual?.status || 'none'}{session.backend?.failedSceneIds?.includes(s.id) ? ' - backend flagged' : ''}</small><div className="row tight"><button className="ghost sm" disabled={!i} onClick={() => move(i, -1)}>Move up</button><button className="ghost sm" disabled={i === session.scenes.length - 1} onClick={() => move(i, 1)}>Move down</button><button className="ghost sm" onClick={() => duplicate(i)}>Duplicate</button><button className="ghost sm danger" onClick={() => remove(i)}>Delete</button></div></li>)}</ol>
   </div>
 }
-import { garbageCollectAssets } from '../session.js'
 

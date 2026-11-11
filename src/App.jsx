@@ -15,8 +15,8 @@ import Prompts from './Prompts.jsx'
 import Summary from './Summary.jsx'
 import Voices from './Voices.jsx'
 import { pushDraft, clearDraft } from './draft.js'
-import { createSession, loadSession, saveSession, readLocal, SessionConflict } from './session.js'
-import { useAutosave } from './autosave.js'
+import { createSession, loadSession, saveSession, SessionConflict } from './session.js'
+import { readLocal, useAutosave } from './autosave.js'
 import GuidedPanel from './guided/GuidedPanel.jsx'
 
 
