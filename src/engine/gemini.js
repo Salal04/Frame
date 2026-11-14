@@ -20,12 +20,13 @@ export function createGemini({ keys = [], models = {}, rpm = 5, maxWait = 240 })
       const index = (cursor++ % usable.length), key = usable[index]; if ((cooldown.get(key) || 0) > Date.now()) continue
       const gap = Math.max(0, 60000 / Math.max(1, rpm) - (Date.now() - last)); if (gap) await sleep(gap); last = Date.now()
       try {
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { ...(temperature === undefined ? {} : { temperature }), ...(json ? { responseMimeType: 'application/json' } : {}) } }) })
+        const guard = new AbortController(), onAbort = () => guard.abort(), timer = setTimeout(() => guard.abort(), 150000); signal?.addEventListener('abort', onAbort)
+        let r; try { r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: 'POST', signal: guard.signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { ...(temperature === undefined ? {} : { temperature }), ...(json ? { responseMimeType: 'application/json' } : {}) } }) }) } finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort) }
         const body = await r.json().catch(() => ({})); if (r.ok && textOf(body)) return textOf(body)
         lastError = new Error(`${model}: ${body?.error?.message || r.statusText}`)
         if (r.status === 429 || /quota|rate limit/i.test(lastError.message)) { cooldown.set(key, Date.now() + Math.min(maxWait, 60000)); quota++; continue }
         if (r.status === 400 || r.status === 401 || r.status === 403 || r.status === 404) { cooldown.set(key, Date.now() + 300000); continue }
-      } catch (e) { if (e.name === 'AbortError') throw new Aborted(); lastError = e }
+      } catch (e) { if (e.name === 'AbortError') { if (signal?.aborted) throw new Aborted(); lastError = new Error(`${model}: request timed out after 150 s`) } else lastError = e }
     }
     if (quota >= usable.length) throw new QuotaExhausted(resetAt()); throw lastError || new BadOutput()
   }
