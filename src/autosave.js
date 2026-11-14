@@ -10,7 +10,7 @@ const writeLocal = async (id, value) => { const d = await db(); d.transaction(ST
 //  - flush() while a save is running waits for it and then saves again, instead of silently doing nothing
 //  - the browser copy is stamped, so "unsaved work from this browser" is only offered when it is really newer
 export function useAutosave(session, save, id) {
-  const [state, setState] = useState('Saved'), [savedAt, setSavedAt] = useState(null)
+  const [state, setState] = useState('Saved'), [savedAt, setSavedAt] = useState(null), [error, setError] = useState('')
   const latest = useRef(session), version = useRef(0), savedVersion = useRef(0), running = useRef(null), base = useRef(false)
   latest.current = session
   const flush = async (force = false, snapshot = null) => {
@@ -22,10 +22,10 @@ export function useAutosave(session, save, id) {
       try {
         const out = await save(snap)
         savedVersion.current = Math.max(savedVersion.current, v)
-        setSavedAt(new Date()); setState(version.current === v ? 'Saved' : 'Unsaved changes')
+        setSavedAt(new Date()); setError(''); setState(version.current === v ? 'Saved' : 'Unsaved changes')
         writeLocal(id, { ...snap, _localAt: new Date().toISOString(), _clean: version.current === v }).catch(() => {})
         return out
-      } catch (e) { setState('Not saved, kept on this device'); throw e }
+      } catch (e) { setError(e?.message || String(e)); setState('Not saved, kept on this device'); throw e }
     })()
     running.current = job
     try { return await job } finally { if (running.current === job) running.current = null }
@@ -43,5 +43,5 @@ export function useAutosave(session, save, id) {
     addEventListener('visibilitychange', hidden); addEventListener('pagehide', hidden); addEventListener('beforeunload', warn)
     return () => { clearInterval(t); removeEventListener('visibilitychange', hidden); removeEventListener('pagehide', hidden); removeEventListener('beforeunload', warn) }
   }, [])
-  return { state, savedAt, flush, markDirty: () => { version.current++; setState('Unsaved changes') }, dirty: state !== 'Saved' }
+  return { state, error, savedAt, flush, markDirty: () => { version.current++; setState('Unsaved changes') }, dirty: state !== 'Saved' }
 }

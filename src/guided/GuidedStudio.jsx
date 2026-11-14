@@ -61,7 +61,7 @@ export default function GuidedStudio(props) {
     if (session.settings.continuous && !pl.auto.running && session.scenes.some(s => !isApproved(s))) pl.runAuto()
     else if (session.settings.bgVoices !== false) pl.prefetchVoices(Math.max(0, idx))
   }, [session.stage])
-  useEffect(() => { const s = autosave.state; if (s) pl.log(/not saved|fail|error|conflict/i.test(s) ? 'error' : 'info', `Drive: ${s}`) }, [autosave.state])
+  useEffect(() => { const s = autosave.state; if (s) pl.log(/not saved|fail|error|conflict/i.test(s) ? 'error' : 'info', `Drive: ${s}`); if (/not saved/i.test(s) && autosave.error) pl.log('error', `Drive save problem: ${autosave.error}`) }, [autosave.state])
   const onErrors = (list, replace) => { list.forEach(x => x.error && pl.log('error', `Preview error: ${x.error}`, x.id)); setBad(b => { const o = replace ? {} : { ...b }; list.forEach(x => { o[x.id] = x.error }); return o }) }
 
   // ---- the one button that always does the sensible next thing for this scene ----

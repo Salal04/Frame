@@ -44,7 +44,7 @@ export function usePipeline({ session, setSession, autosave, global, folders, pl
   const scene = id => sRef.current.scenes.find(x => x.id === id)
   const saveNow = useCallback(() => live.current.autosave.flush(true, sRef.current).then(() => log('ok', 'Saved to Drive.')).catch(e => { log('error', `Could not save to Drive: ${e?.message || e}`); const h = hintFor(e?.message); if (h) log('warn', h) }), [log])
   const look = () => ({ ...sRef.current.settings, look: sRef.current.blueprint?.plan?.look })   // the shared look is passed to every visual prompt
-  const gem = useMemo(() => { try { const g = global || {}; return createGemini({ keys: g.keys?.gemini || [], models: g.models || {}, rpm: g.limits?.rpm || 5, maxWait: g.limits?.max_wait || 240 }) } catch { return null } }, [global])
+  const gem = useMemo(() => { try { const g = global || {}; return createGemini({ keys: g.keys?.gemini || [], models: g.models || {}, rpm: g.limits?.rpm || 5, maxWait: g.limits?.max_wait || 240, onEvent: (level, msg) => log(level, msg) }) } catch { return null } }, [global])
   const needGem = () => { if (!gem) throw new Error('Add a Gemini API key in Control room first.'); return gem }
 
   // run one job per (scene, kind); show it in the UI; remember its error

@@ -8,7 +8,7 @@ const textOf = j => j?.candidates?.[0]?.content?.parts?.map(p => p.text || '').j
 export const extractCode = text => (String(text || '').match(/```(?:tsx|typescript|ts|jsx|javascript|js)?\s*\n([\s\S]*?)```/i)?.[1] || String(text || '').replace(/^```\w*\s*|```$/g, '')).trim()
 export const parseJson = text => { const raw = String(text || '').replace(/^```(?:json)?\s*|```$/gim, '').trim(), hit = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/); try { return JSON.parse(hit?.[0] || raw) } catch { throw new BadOutput('Gemini returned invalid JSON. Retry the step.') } }
 
-export function createGemini({ keys = [], models = {}, rpm = 5, maxWait = 240 }) {
+export function createGemini({ keys = [], models = {}, rpm = 5, maxWait = 240, onEvent = () => {} }) {
   const usable = keys.filter(Boolean), cooldown = new Map(); let cursor = 0, last = 0
   if (!usable.length) throw new BadOutput('Add a Gemini API key in Control room first.')
   const chain = task => { const tier = task === 'code' ? 'code' : task === 'tts' ? 'tts' : task === 'medium' ? 'medium' : 'light'; return Array.isArray(models[tier]) ? models[tier] : String(models[tier] || '').split(/[\n,]/).filter(Boolean) }
@@ -20,13 +20,14 @@ export function createGemini({ keys = [], models = {}, rpm = 5, maxWait = 240 })
       const index = (cursor++ % usable.length), key = usable[index]; if ((cooldown.get(key) || 0) > Date.now()) continue
       const gap = Math.max(0, 60000 / Math.max(1, rpm) - (Date.now() - last)); if (gap) await sleep(gap); last = Date.now()
       try {
+        onEvent('info', `Asking Gemini (${model}, ${task})…`)
         const guard = new AbortController(), onAbort = () => guard.abort(), timer = setTimeout(() => guard.abort(), 150000); signal?.addEventListener('abort', onAbort)
         let r; try { r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: 'POST', signal: guard.signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { ...(temperature === undefined ? {} : { temperature }), ...(json ? { responseMimeType: 'application/json' } : {}) } }) }) } finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort) }
         const body = await r.json().catch(() => ({})); if (r.ok && textOf(body)) return textOf(body)
-        lastError = new Error(`${model}: ${body?.error?.message || r.statusText}`)
+        lastError = new Error(`${model}: ${body?.error?.message || r.statusText}`); onEvent('warn', `Gemini said: ${lastError.message.slice(0, 200)}`)
         if (r.status === 429 || /quota|rate limit/i.test(lastError.message)) { cooldown.set(key, Date.now() + Math.min(maxWait, 60000)); quota++; continue }
         if (r.status === 400 || r.status === 401 || r.status === 403 || r.status === 404) { cooldown.set(key, Date.now() + 300000); continue }
-      } catch (e) { if (e.name === 'AbortError') { if (signal?.aborted) throw new Aborted(); lastError = new Error(`${model}: request timed out after 150 s`) } else lastError = e }
+      } catch (e) { if (e.name === 'AbortError') { if (signal?.aborted) throw new Aborted(); lastError = new Error(`${model}: request timed out after 150 s`) } else lastError = e; onEvent('warn', `Gemini request failed: ${String(lastError.message || lastError).slice(0, 200)}`) }
     }
     if (quota >= usable.length) throw new QuotaExhausted(resetAt()); throw lastError || new BadOutput()
   }
