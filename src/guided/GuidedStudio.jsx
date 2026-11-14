@@ -25,7 +25,7 @@ function Options({ session, pl, compact }) {
 export default function GuidedStudio(props) {
   const { session, autosave, onAdvanced } = props
   const pl = usePipeline({ session, setSession: props.setSession, autosave, global: props.global, folders: props.folders, playlist: props.playlist, row: props.row, project: props.project, onRow: props.onRow })
-  const head = useRef(makeHead()).current, stage = useRef(null), init = useRef(false), layRef = useRef(null), prevStage = useRef(session.stage)
+  const head = useRef(makeHead()).current, stage = useRef(null), init = useRef(false), layRef = useRef(null), prevStage = useRef(session.stage), recRef = useRef(false)
   const [tab, setTab] = useState('script'), [mode, setMode] = useState('whole'), [bad, setBad] = useState({}), [long, setLong] = useState(false), [saveErr, setSaveErr] = useState('')
   const lay = layout(session.scenes, session.settings); layRef.current = lay
   const n = session.scenes.length, scene = session.scenes.find(s => s.id === session.current) || session.scenes[0], idx = scene ? session.scenes.findIndex(s => s.id === scene.id) : -1
@@ -44,11 +44,12 @@ export default function GuidedStudio(props) {
   }
   const save = async () => { setSaveErr(''); try { await autosave.flush(true, pl.sRef.current) } catch (e) { setSaveErr(e.message || 'Could not save to Drive. Your work is kept in this browser.') } }
 
+  useEffect(() => { const h = e => { recRef.current = !!e.detail; if (e.detail) stage.current?.pause() }; addEventListener('frame-rec', h); return () => removeEventListener('frame-rec', h) }, [])   // while you record, the preview stops and the space bar is yours
   useEffect(() => {
     const key = e => {
       const t = e.target, typing = /INPUT|TEXTAREA|SELECT/.test(t?.tagName) || t?.isContentEditable
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save() }
-      else if (e.code === 'Space' && !typing) { e.preventDefault(); toggle() }
+      else if (e.code === 'Space' && !typing && !recRef.current) { e.preventDefault(); toggle() }
     }
     addEventListener('keydown', key); return () => removeEventListener('keydown', key)
   })

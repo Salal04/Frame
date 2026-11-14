@@ -10,7 +10,7 @@ function Trimmer({ clip, onUse, onDiscard, narration, busy }) {
   const [points, setPoints] = useState(() => trimPoints(mono(clip.buf), clip.buf.sampleRate)), audio = useRef(null)
   const peaks = useMemo(() => peaksOf(mono(clip.buf), 900), [clip])
   const url = useMemo(() => URL.createObjectURL(clip.blob), [clip]); useEffect(() => () => URL.revokeObjectURL(url), [url])
-  const play = () => { const a = audio.current; a.currentTime = points[0]; a.play(); const stop = () => { if (a.currentTime >= points[1]) { a.pause(); a.removeEventListener('timeupdate', stop) } }; a.addEventListener('timeupdate', stop) }
+  const play = () => { const a = audio.current; a.currentTime = points[0]; a.play().catch(() => {}); const stop = () => { if (a.currentTime >= points[1]) { a.pause(); a.removeEventListener('timeupdate', stop) } }; a.addEventListener('timeupdate', stop) }
   const use = () => onUse(sliceToWav(clip.buf, points[0], points[1]))
   return <div className="gs-trim"><p className="hint">Drag the two handles to cut off the silence or any mistake at the start and end.</p>
     <WaveCuts peaks={peaks} duration={clip.buf.duration} points={points} setPoints={setPoints} /><audio ref={audio} src={url} preload="auto" />
@@ -20,18 +20,20 @@ function Trimmer({ clip, onUse, onDiscard, narration, busy }) {
 
 export default function VoiceTab({ session, scene, pl, onLong }) {
   const st = session.settings, mode = st.voiceMode || 'ai', source = scene.voice?.source || 'ai'
-  const [clip, setClip] = useState(null), [rec, setRec] = useState(null), [secs, setSecs] = useState(0), [level, setLevel] = useState(0), [err, setErr] = useState(''), [saving, setSaving] = useState(false), [note, setNote] = useState('')
+  const [clip, setClip] = useState(null), [rec, setRec] = useState(null), [secs, setSecs] = useState(0), [level, setLevel] = useState(0), [err, setErr] = useState(''), [saving, setSaving] = useState(false), [note, setNote] = useState(''), [anchor, setAnchor] = useState(null)
   const mic = useRef(null), prompter = useRef(null), file = useRef(null)
   const job = pl.jobs[`${scene.id}:voice`], rtl = /[\u0600-\u06FF]/.test(scene.narration)
-  useEffect(() => { setClip(null); setErr('') }, [scene.id])
+  useEffect(() => { setClip(null); setErr(''); setAnchor(null); return () => { const m = mic.current; if (m) { mic.current = null; m.stop().catch(() => {}); setRec(false) } } }, [scene.id])
+  useEffect(() => { dispatchEvent(new CustomEvent('frame-rec', { detail: !!rec })); return () => dispatchEvent(new CustomEvent('frame-rec', { detail: false })) }, [rec])   // tells the studio: stop the preview, ignore the space bar
   useEffect(() => { if (!rec) return; const t0 = Date.now(), t = setInterval(() => { setSecs((Date.now() - t0) / 1000); setLevel(mic.current?.level() || 0) }, 90); return () => clearInterval(t) }, [rec])
   const estimate = Math.max(4, words(scene.narration) / (st.language === 'ur' ? 2.3 : 2.5))
   const live = useMemo(() => buildTimeline(scene.narration, estimate), [scene.narration, estimate])
-  const lineNow = rec ? live.findIndex(x => secs >= x.start && secs < x.end) : -1
+  const base = anchor && live[anchor.i] ? live[anchor.i].start + (secs - anchor.t) : secs
+  const lineNow = rec ? (base >= (live.at(-1)?.end ?? 0) ? live.length - 1 : live.findIndex(x => base >= x.start && base < x.end)) : -1
   useEffect(() => { if (lineNow >= 0) prompter.current?.querySelector(`[data-i="${lineNow}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }) }, [lineNow])
   const setMode = m => pl.commit(s => ({ ...s, settings: { ...s.settings, voiceMode: m } }))
-  const start = async () => { setErr(''); try { mic.current = await startMic(); setRec(true); setSecs(0) } catch (e) { setErr(e.message) } }
-  const stop = async () => { try { const blob = await mic.current.stop(); setRec(false); setClip({ blob, buf: await decode(blob) }) } catch (e) { setRec(false); setErr(e.message) } }
+  const start = async () => { setErr(''); setAnchor(null); try { mic.current = await startMic(); setRec(true); setSecs(0) } catch (e) { setErr(e.message) } }
+  const stop = async () => { try { const m = mic.current; mic.current = null; const blob = await m.stop(); setRec(false); setClip({ blob, buf: await decode(blob) }) } catch (e) { setRec(false); setErr(e.message) } }
   const pickFile = async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; setErr(''); try { setClip({ blob: f, buf: await decode(f), name: f.name }) } catch (x) { setErr(x.message) } }
   const useClip = async cut => {
     setSaving(true); setErr('')
@@ -42,7 +44,7 @@ export default function VoiceTab({ session, scene, pl, onLong }) {
   const aiErr = pl.errors[`${scene.id}:voice`]
   return <div className="gs-tab">
     <div className="gs-seg"><button className={mode === 'ai' ? 'on' : ''} onClick={() => setMode('ai')}>AI voice (Gemini)</button><button className={mode === 'mine' ? 'on' : ''} onClick={() => setMode('mine')}>My own voice</button></div>
-    <p className="hint">{mode === 'ai' ? 'Voices for the next scenes are made together in the background while you work.' : 'You record or upload. Continuous build waits for you on scenes that have no recording yet.'}</p>
+    <p className="hint">{mode === 'mine' && rec ? 'Reading faster or slower than the guide? Click the line you are on and the highlight follows you.' : mode === 'ai' ? 'Voices for the next scenes are made together in the background while you work.' : 'You record or upload. Continuous build waits for you on scenes that have no recording yet.'}</p>
 
     {mode === 'ai' && <>
       <div className="cols"><label>Voice<select disabled={!!job} value={scene.voice?.voice || st.voice || 'Charon'} onChange={e => pl.patch(scene.id, x => ({ ...x, voice: { ...x.voice, voice: e.target.value, status: x.voice?.fileId ? 'stale' : x.voice?.status || 'none' } }))}>{VOICES.map(v => <option key={v[0]} value={v[0]}>{v[0]} · {v[1]}</option>)}</select></label>
@@ -54,7 +56,7 @@ export default function VoiceTab({ session, scene, pl, onLong }) {
 
     {mode === 'mine' && <>
       <div className="gs-prompter" ref={prompter} dir={rtl ? 'rtl' : 'ltr'}>
-        {live.length ? live.map(x => <p key={x.i} data-i={x.i} className={x.i === lineNow ? 'now' : rec && x.i < lineNow ? 'done' : ''}>{x.text}</p>) : <p className="muted">This scene has no script yet. Write the narration in the Script tab.</p>}
+        {live.length ? live.map(x => <p key={x.i} data-i={x.i} onClick={() => rec && setAnchor({ i: x.i, t: secs })} title={rec ? 'Click when you start reading this line, the highlight will follow you' : undefined} className={x.i === lineNow ? 'now' : rec && x.i < lineNow ? 'done' : ''}>{x.text}</p>) : <p className="muted">This scene has no script yet. Write the narration in the Script tab.</p>}
       </div>
       {!clip && <div className="row tight">
         {!rec ? <button className="cta sm red" disabled={!scene.narration.trim()} onClick={start}>● Record</button> : <button className="cta sm red" onClick={stop}>■ Stop · {secs.toFixed(1)} s</button>}
@@ -75,6 +77,7 @@ export default function VoiceTab({ session, scene, pl, onLong }) {
 export function LongRecording({ session, pl, onClose }) {
   const scenes = session.scenes, [clip, setClip] = useState(null), [points, setPoints] = useState([]), [busy, setBusy] = useState(''), [err, setErr] = useState(''), file = useRef(null), audio = useRef(null), [recording, setRecording] = useState(false), mic = useRef(null), [secs, setSecs] = useState(0)
   useEffect(() => { if (!recording) return; const t0 = Date.now(), t = setInterval(() => setSecs((Date.now() - t0) / 1000), 200); return () => clearInterval(t) }, [recording])
+  useEffect(() => { dispatchEvent(new CustomEvent('frame-rec', { detail: recording })); return () => dispatchEvent(new CustomEvent('frame-rec', { detail: false })) }, [recording])
   const load = async (blob, name) => { setErr(''); try { const buf = await decode(blob); setClip({ blob, buf, name }); setPoints(splitPoints(mono(buf), buf.sampleRate, scenes.map(s => s.narration))) } catch (e) { setErr(e.message) } }
   const peaks = useMemo(() => (clip ? peaksOf(mono(clip.buf), 1600) : null), [clip]), url = useMemo(() => (clip ? URL.createObjectURL(clip.blob) : ''), [clip]); useEffect(() => () => url && URL.revokeObjectURL(url), [url])
   const apply = async () => {

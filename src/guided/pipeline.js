@@ -26,6 +26,7 @@ export function usePipeline({ session, setSession, autosave, global, folders, pl
   const patch = useCallback((id, fn) => commit(s => ({ ...s, scenes: s.scenes.map(x => (x.id === id ? fn(x) : x)) })), [commit])
   const scene = id => sRef.current.scenes.find(x => x.id === id)
   const saveNow = useCallback(() => live.current.autosave.flush(true, sRef.current).catch(() => {}), [])
+  const look = () => ({ ...sRef.current.settings, look: sRef.current.blueprint?.plan?.look })   // the shared look is passed to every visual prompt
   const gem = useMemo(() => { try { const g = global || {}; return createGemini({ keys: g.keys?.gemini || [], models: g.models || {}, rpm: g.limits?.rpm || 5, maxWait: g.limits?.max_wait || 240 }) } catch { return null } }, [global])
   const needGem = () => { if (!gem) throw new Error('Add a Gemini API key in Control room first.'); return gem }
 
@@ -42,7 +43,7 @@ export function usePipeline({ session, setSession, autosave, global, folders, pl
   const voiceHistory = x => { const prior = x.voice?.fileId ? { type: 'voice-take', ...x.voice } : null; const takes = uniq([...(x.history || []).filter(h => h.type === 'voice-take'), ...(prior ? [prior] : [])]).slice(-4); return [...(x.history || []).filter(h => h.type !== 'voice-take'), ...takes] }
   // store a finished audio take (AI, recorded or uploaded) for a scene
   const attachVoice = async (id, { blob, duration, timeline, source = 'ai', voice, style }) => {
-    const cur = scene(id), take = (cur.voice?.take || 0) + 1, asset = await uploadAsset(live.current.folders, 'audio', `scene_${pad(id)}_take_${take}.wav`, blob), before = sRef.current
+    const cur = scene(id); if (!cur) throw new Error('This scene was deleted while its voice was saving.'); const take = (cur.voice?.take || 0) + 1, asset = await uploadAsset(live.current.folders, 'audio', `scene_${pad(id)}_take_${take}.wav`, blob), before = sRef.current
     const next = patch(id, x => ({ ...x, narrationStatus: 'draft', history: voiceHistory(x), visual: staleVisual(x.visual), voice: { ...x.voice, status: 'draft', fileId: asset.fileId, name: asset.name, duration, timeline, take, source, ...(voice ? { voice } : {}), ...(style !== undefined ? { style } : {}) } }))
     await saveNow(); garbageCollectAssets(before, next).catch(() => {})
   }
@@ -51,14 +52,14 @@ export function usePipeline({ session, setSession, autosave, global, folders, pl
     try {
     const cur = scene(id), st = sRef.current.settings, g = live.current.global || {}
     if (!cur?.narration?.trim()) throw new Error('This scene has no narration yet.')
-    const voice = opts.voice || cur.voice?.voice || st.voice || 'Charon', style = [opts.style ?? cur.voice?.style ?? st.tts_style ?? 'calm, clear and friendly', opts.note].filter(Boolean).join(', ')
+    const voice = opts.voice || cur.voice?.voice || st.voice || 'Charon', baseStyle = opts.style ?? cur.voice?.style ?? st.tts_style ?? 'calm, clear and friendly', style = [baseStyle, opts.note].filter(Boolean).join(', ')
     let out
     for (let attempt = 0; ; attempt++) {
       try { out = await speak({ keys: g.keys?.tts?.length ? g.keys.tts : g.keys?.gemini || [], models: g.models?.tts || [], voice, style, text: cur.narration }); break }
       catch (e) { if (attempt >= 2 || !TRANSIENT.test(e.message || '')) throw e; await sleep(4000 * (attempt + 1)) }
     }
     const buf = await decode(out.wav), timeline = alignTimeline(buf.getChannelData(0), buf.sampleRate, cur.narration, out.duration)
-    await attachVoice(id, { blob: out.wav, duration: out.duration, timeline, source: 'ai', voice, style })
+    await attachVoice(id, { blob: out.wav, duration: out.duration, timeline, source: 'ai', voice, style: baseStyle })
     } catch (e) { failedVoice.current.add(id); throw e }
   })
   const useTake = async (id, item) => { const before = sRef.current; const next = patch(id, x => { const old = x.voice?.fileId && x.voice.fileId !== item.fileId ? { type: 'voice-take', ...x.voice } : null; const takes = uniq([...(x.history || []).filter(h => h.type === 'voice-take' && h.fileId !== item.fileId), ...(old ? [old] : [])]).slice(-4); return { ...x, history: [...(x.history || []).filter(h => h.type !== 'voice-take'), ...takes], visual: staleVisual(x.visual), voice: { ...x.voice, ...item, type: undefined, status: 'draft' } } }); await saveNow(); garbageCollectAssets(before, next).catch(() => {}) }
@@ -78,7 +79,7 @@ export function usePipeline({ session, setSession, autosave, global, folders, pl
   const loadCode = async id => { const f = scene(id)?.visual?.codeFileId; return f ? (await fetchAsset(f)).text() : '' }
   // plan + write + check (+ repair) one scene's animation, timed to its voice
   const genVisual = (id, { note = '', mode = 'fresh', replan = true } = {}) => track(id, 'visual', mode === 'improve' ? 'Improving visual…' : 'Designing visual…', async () => {
-    const g = needGem(), cur = scene(id), st = sRef.current.settings
+    const g = needGem(), cur = scene(id), st = look()
     if (!cur?.voice?.fileId) throw new Error('Make the voice first: the visual is timed to it.')
     let working = cur
     if (replan || !cur.visual?.steps?.length) { const spec = await visualPlan(g, st, cur); working = { ...cur, visual: { ...cur.visual, status: 'draft', steps: spec.steps || [], visuals: spec.visuals || [] } }; patch(id, x => ({ ...x, visual: working.visual })) }
@@ -92,7 +93,7 @@ export function usePipeline({ session, setSession, autosave, global, folders, pl
     if (note) patch(id, x => ({ ...x, notes: [...(x.notes || []), { kind: 'visual', text: note, at: new Date().toISOString() }] }))
     await saveVisualCode(id, code)
   })
-  const fixVisual = (id, error) => track(id, 'visual', 'Fixing visual…', async () => { const g = needGem(), code = await loadCode(id), cur = scene(id); const out = await genCode(g, sRef.current.settings, { ...cur, ...cur.visual }, { previous: code, note: `Fix this error: ${error}` }); await saveVisualCode(id, out) })
+  const fixVisual = (id, error) => track(id, 'visual', 'Fixing visual…', async () => { const g = needGem(), code = await loadCode(id), cur = scene(id); const out = await genCode(g, look(), { ...cur, ...cur.visual }, { previous: code, note: `Fix this error: ${error}` }); await saveVisualCode(id, out) })
   const approveVisual = id => patch(id, x => (x.visual?.codeFileId ? { ...x, visual: { ...x.visual, status: 'approved', error: '' } } : x))
   const approveScene = id => { approveVoice(id); approveVisual(id); commit(s => (s.redoQueue?.sceneId === id ? { ...s, redoQueue: null } : s)); saveNow() }
 
@@ -100,18 +101,18 @@ export function usePipeline({ session, setSession, autosave, global, folders, pl
   const runAuto = async () => {
     if (autoLock.current) return
     autoLock.current = true; stopAuto.current = false
-    const failed = new Set(), tries = {}; let sendAfter = false
+    const failed = new Set(), waiting = new Set(), tries = {}; let sendAfter = false
     commit(s => ({ ...s, auto: { ...(s.auto || {}), on: true } }))
     try {
       while (!stopAuto.current) {
-        const s = sRef.current, idx = s.scenes.findIndex(x => !failed.has(x.id) && !(isDone(x))), n = s.scenes.length
+        const s = sRef.current, idx = s.scenes.findIndex(x => !failed.has(x.id) && !waiting.has(x.id) && !(isDone(x))), n = s.scenes.length
         if (idx < 0) break
         const sc = s.scenes[idx], mine = (s.settings.voiceMode || 'ai') === 'mine', tag = `Scene ${idx + 1} of ${n}`
         prefetchVoices(idx)
         try {
           if (!sc.narration?.trim()) { failed.add(sc.id); continue }
           if (!sc.voice?.fileId || sc.narrationStatus === 'stale' || sc.voice.status === 'stale') {
-            if (mine) { setAuto({ running: false, msg: `Waiting for your ${sc.voice?.fileId ? 're-recording' : 'recording'} of scene ${idx + 1}. Record it, then press Resume.`, failed: [...failed] }); stopAuto.current = true; break }
+            if (mine) { waiting.add(sc.id); continue }   // your own voice: skip it for now and keep building the other scenes
             setAuto({ running: true, msg: `${tag}: making the voice…`, failed: [...failed] }); await genVoice(sc.id)
           }
           approveVoice(sc.id)
@@ -123,8 +124,9 @@ export function usePipeline({ session, setSession, autosave, global, folders, pl
           if (tries[sc.id] >= 2) failed.add(sc.id); else await sleep(3000)
         }
       }
-      sendAfter = !stopAuto.current && !failed.size && sRef.current.auto?.send && canSend(sRef.current)
-      if (!stopAuto.current) setAuto({ running: false, msg: failed.size ? `Finished. ${failed.size} scene(s) need your attention (marked red on the timeline).` : 'All scenes are built.', failed: [...failed] })
+      const need = [...waiting].map(id => sRef.current.scenes.findIndex(x => x.id === id) + 1).sort((a, b) => a - b)
+      sendAfter = !stopAuto.current && !failed.size && !waiting.size && sRef.current.auto?.send && canSend(sRef.current)
+      if (!stopAuto.current) setAuto({ running: false, msg: waiting.size ? `Built everything that has a voice. Waiting for your recording of scene ${need.join(', ')}. Record ${need.length > 1 ? 'them' : 'it'}, then press Resume.` : failed.size ? `Finished. ${failed.size} scene(s) need your attention (marked red on the timeline).` : 'All scenes are built.', failed: [...failed] })
       else setAuto(a => ({ ...a, running: false }))
       commit(s => ({ ...s, auto: { ...(s.auto || {}), on: false } })); await saveNow()
       if (sendAfter) await sendNow()
