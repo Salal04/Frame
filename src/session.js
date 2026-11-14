@@ -8,8 +8,11 @@ export const blankSession = (row, cfg = {}) => ({ version: 1, rev: 0, savedAt: s
 async function putText(parent, name, text) {
   const old = await G.find(name, parent)
   if (!old) return G.upload(new File([text], name, { type: MIME }), parent)
-  const r = await fetch(`${G.D}/files/${old.id}?uploadType=media`, { method: 'PATCH', headers: { Authorization: `Bearer ${G.getToken()}`, 'Content-Type': MIME }, body: text })
-  if (!r.ok) throw new Error('Could not save guided session')
+  // Content updates MUST go to the /upload/ endpoint. The plain /drive/v3 endpoint treats the body as file metadata
+  // and rejects session.json (unknown fields like "version", "rev"), which is why every save after the first failed.
+  // G.api also renews an expired token and puts Google's real error text in the message.
+  try { await G.api(`https://www.googleapis.com/upload/drive/v3/files/${old.id}?uploadType=media&fields=id`, { method: 'PATCH', headers: { 'Content-Type': MIME }, body: text }) }
+  catch (e) { throw new Error(`Could not save guided session (${e.message || e})`) }
   return { id: old.id }
 }
 export async function ensureSessionFolders(p, row) {
