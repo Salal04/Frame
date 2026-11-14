@@ -175,7 +175,7 @@ export default function Videos({ p, g, cfg, name, rows, setRows, run, gotoThumb,
         : { order: rows.length + 1, title: ti || tp.slice(0, 60), topic: tp || ti, inputType: 'Prompt', script: '', instruction: ins, minutes: nt.minutes || cfg.minutes, status: 'Hold' }
       const ids = guided ? await P.ensureVideoFolder(p, item) : {}
       await P.saveVideo(p, { ...item, ...ids, buildMode: guided ? 'guided' : 'auto' })
-      if (guided) { const made = (await P.loadVideos(p)).find(x => x.title === item.title); if (made) { gotoGuided(made); return } }
+      if (guided) { const made = (await P.loadVideos(p)).filter(x => x.title === item.title).at(-1); if (made) { gotoGuided(made); return } }
       setNt({ ...BLANK, mode: nt.mode }); await reload() })
   }
   const pickScript = ev => { const x = ev.target.files[0]; ev.target.value = ''; if (x) run('Reading the script…', async () => { const t = await G.readTextFile(x); tooLong(t); setNt(c => ({ ...c, mode: c.mode === 'Source' ? 'Source' : 'Script', script: t, title: c.title || x.name.replace(/\.[^.]+$/, '') })) }) }
