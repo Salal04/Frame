@@ -18,6 +18,7 @@ import { pushDraft, clearDraft } from './draft.js'
 import { createSession, loadSession, saveSession, SessionConflict } from './session.js'
 import { readLocal, useAutosave } from './autosave.js'
 import GuidedPanel from './guided/GuidedPanel.jsx'
+import GuidedStudio from './guided/GuidedStudio.jsx'
 
 
 export default function App() {
@@ -133,26 +134,27 @@ function Playlists({ w, run, open }) {
 }
 
 function GuidedEditor({ w, run, p, r, cfg, onEdit, onSocial }) {
-  const [loaded, setLoaded] = useState(null), [session, setSession] = useState(null), [restore, setRestore] = useState(null), [rowState, setRowState] = useState(r), [conflict, setConflict] = useState(false)
-  useEffect(() => { run('Opening guided builder…', async () => { const got = await loadSession(p, r, cfg); if (!got.exists) { const made = await createSession(p, { ...r, ...got.folders.ids }, cfg); setLoaded(made.folders); setSession(made.session); return } setLoaded(got.folders); const local = await readLocal(`${p.folderId}:${r.row}`); if (local && (local.rev > got.session.rev || local.savedAt > got.session.savedAt)) setRestore(local); setSession(got.session) }) }, [])
+  const [loaded, setLoaded] = useState(null), [session, setSession] = useState(null), [restore, setRestore] = useState(null), [rowState, setRowState] = useState(r), [conflict, setConflict] = useState(false), [advanced, setAdvanced] = useState(false), revRef = useRef(0)
+  useEffect(() => { run('Opening guided builder…', async () => { const got = await loadSession(p, r, cfg); if (!got.exists) { const made = await createSession(p, { ...r, ...got.folders.ids }, cfg); revRef.current = made.session.rev || 0; setLoaded(made.folders); setSession(made.session); return } revRef.current = got.session.rev || 0; setLoaded(got.folders); const local = await readLocal(`${p.folderId}:${r.row}`); if (local && local._clean === false && local._localAt > got.session.savedAt) setRestore(local); setSession(got.session) }) }, [])
   useEffect(() => { if (!['Waiting', 'In Process'].includes(rowState?.status)) return; let active = true; const reload = () => P.loadVideos(p).then(rows => { if (active) setRowState(rows.find(x => x.row === rowState.row) || rowState) }).catch(() => {}); const timer = setInterval(reload, 30000); addEventListener('focus', reload); return () => { active = false; clearInterval(timer); removeEventListener('focus', reload) } }, [p, rowState?.row, rowState?.status])
-  const auto = useAutosave(session || { rev: 0 }, async s => { try { const next = await saveSession(loaded, s); setSession(next); return next } catch (e) { if (e instanceof SessionConflict) setConflict(true); throw e } }, `${p.folderId}:${rowState?.row || r.row}`)
-  const reloadConflict = async () => { const got = await loadSession(p, rowState, cfg); setLoaded(got.folders); setSession(got.session); setConflict(false) }
-  const overwriteConflict = async () => { const next = await saveSession(loaded, session, { force: true }); setSession(next); setConflict(false) }
+  const auto = useAutosave(session || { rev: 0 }, async s => { try { const next = await saveSession(loaded, { ...s, rev: revRef.current }); revRef.current = next.rev; return next } catch (e) { if (e instanceof SessionConflict) setConflict(true); throw e } }, `${p.folderId}:${rowState?.row || r.row}`)
+  const reloadConflict = async () => { const got = await loadSession(p, rowState, cfg); revRef.current = got.session.rev || 0; setLoaded(got.folders); setSession(got.session); setConflict(false) }
+  const overwriteConflict = async () => { const next = await saveSession(loaded, { ...session, rev: revRef.current }, { force: true }); revRef.current = next.rev; setConflict(false) }
   const cloneSession = () => run('Making a new version…', async () => {
     const rows = await P.loadVideos(p), title = `${session.title || r.title} (new version)`, order = rows.reduce((n, x) => Math.max(n, +x.order || 0, x.row - 1), 0) + 1
     await P.saveVideo(p, { order, title, topic: session.title, inputType: ['Script', 'Source'].includes(session.inputType) ? session.inputType : 'Prompt', script: session.sourceText || '', sourceMode: session.inputType === 'Source' ? r.sourceMode : '', minutes: session.settings.minutes, audience: session.settings.audience, language: session.settings.language, screen_language: session.settings.screen_language, aspect: session.settings.aspect, status: 'Hold', buildMode: 'guided' })
     const madeRow = (await P.loadVideos(p)).filter(x => x.title === title).at(-1)
     if (!madeRow) throw new Error('The new video row was created, but could not be reopened.')
     const made = await createSession(p, madeRow, cfg), copy = { ...session, rev: 0, savedAt: new Date().toISOString(), videoRow: madeRow.row, title, stage: session.scenes.length ? 'scenes' : 'blueprint', activeStep: null, submittedMaps: session.submittedMaps || [], backend: null }
-    const saved = await saveSession(made.folders, copy, { force: true }); setLoaded(made.folders); setSession(saved); setRowState(madeRow); setRestore(null)
+    const saved = await saveSession(made.folders, copy, { force: true }); revRef.current = saved.rev; setLoaded(made.folders); setSession(saved); setRowState(madeRow); setRestore(null)
   })
   if (!session || !loaded) return <main className="page"><p>Opening guided builder…</p></main>
   const guided = { session, setSession, autosave: auto, global: w.g.cfg, folders: loaded, row: rowState, playlist: p, project: cfg, onRow: setRowState, onEdit, onSocial, onClone: cloneSession }
   const view = ['Waiting', 'In Process', 'Completed'].includes(rowState.status)
     ? <main className="page"><GuidedPanel {...guided} status={auto.state} /></main>
-    : <Editor w={w} run={run} start={{ p, r: rowState }} guided={guided} onSocial={onSocial} />
-  return <>{view}{restore && <div className="err">Unsaved work from this browser is newer. <button onClick={() => { setSession(restore); setRestore(null) }}>Restore unsaved work</button><button onClick={() => setRestore(null)}>Use Drive version</button></div>}{conflict && <div className="err"><b>This session changed in another tab.</b> Reload that version or deliberately overwrite it. <button className="ghost sm" onClick={reloadConflict}>Reload remote</button><button className="ghost sm" onClick={overwriteConflict}>Overwrite remote</button></div>}</>
+    : advanced ? <><div className="gs-back"><button className="ghost sm" onClick={() => setAdvanced(false)}>← Back to the guided studio</button></div><Editor w={w} run={run} start={{ p, r: rowState }} guided={guided} onSocial={onSocial} /></>
+    : <GuidedStudio {...guided} onAdvanced={() => setAdvanced(true)} />
+  return <>{view}{restore && <div className="err">Unsaved work from this browser is newer. <button onClick={() => { const { _localAt, _clean, ...clean } = restore; setSession(clean); setRestore(null) }}>Restore unsaved work</button><button onClick={() => setRestore(null)}>Use Drive version</button></div>}{conflict && <div className="err"><b>This session changed in another tab.</b> Reload that version or deliberately overwrite it. <button className="ghost sm" onClick={reloadConflict}>Reload remote</button><button className="ghost sm" onClick={overwriteConflict}>Overwrite remote</button></div>}</>
 }
 
 function Playlist({ w, p, run, back, single, onEdit, onGuided, onVoices }) {
