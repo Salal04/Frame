@@ -6,6 +6,7 @@ import Timeline from './Timeline.jsx'
 import ScriptTab from './ScriptTab.jsx'
 import VoiceTab, { LongRecording } from './VoiceTab.jsx'
 import VisualTab from './VisualTab.jsx'
+import LogPanel from './LogPanel.jsx'
 import { usePipeline } from './pipeline.js'
 import { FPS, fmtTime, hasVoice, isApproved, layout, sceneAtFrame } from './model.js'
 
@@ -42,7 +43,7 @@ export default function GuidedStudio(props) {
     if (mode === 'scene' && L) { if (!(head.frame >= L.from && head.frame < L.end - 1)) stage.current.seek(L.from); stage.current.play({ from: L.from, end: L.end }) }
     else { if (head.frame >= lay.frames - 2) stage.current.seek(0); stage.current.play() }
   }
-  const save = async () => { setSaveErr(''); try { await autosave.flush(true, pl.sRef.current) } catch (e) { setSaveErr(e.message || 'Could not save to Drive. Your work is kept in this browser.') } }
+  const save = async () => { setSaveErr(''); try { await autosave.flush(true, pl.sRef.current) } catch (e) { setSaveErr(e.message || 'Could not save to Drive. Your work is kept in this browser.'); pl.log('error', `Could not save to Drive: ${e.message || 'unknown error'}`) } }
 
   useEffect(() => { const h = e => { recRef.current = !!e.detail; if (e.detail) stage.current?.pause() }; addEventListener('frame-rec', h); return () => removeEventListener('frame-rec', h) }, [])   // while you record, the preview stops and the space bar is yours
   useEffect(() => {
@@ -60,7 +61,8 @@ export default function GuidedStudio(props) {
     if (session.settings.continuous && !pl.auto.running && session.scenes.some(s => !isApproved(s))) pl.runAuto()
     else if (session.settings.bgVoices !== false) pl.prefetchVoices(Math.max(0, idx))
   }, [session.stage])
-  const onErrors = (list, replace) => setBad(b => { const o = replace ? {} : { ...b }; list.forEach(x => { o[x.id] = x.error }); return o })
+  useEffect(() => { const s = autosave.state; if (s) pl.log(/not saved|fail|error|conflict/i.test(s) ? 'error' : 'info', `Drive: ${s}`) }, [autosave.state])
+  const onErrors = (list, replace) => { list.forEach(x => x.error && pl.log('error', `Preview error: ${x.error}`, x.id)); setBad(b => { const o = replace ? {} : { ...b }; list.forEach(x => { o[x.id] = x.error }); return o }) }
 
   // ---- the one button that always does the sensible next thing for this scene ----
   const mine = (session.settings.voiceMode || 'ai') === 'mine', jobs = scene ? [pl.jobs[`${scene.id}:voice`], pl.jobs[`${scene.id}:visual`]].filter(Boolean) : []
@@ -87,7 +89,7 @@ export default function GuidedStudio(props) {
     {session.stage === 'blueprint' && <section className="gs-script">
       <h2>Script and scenes</h2>
       <p className="muted">{['Script', 'Source'].includes(session.inputType) ? 'Your text is split into scenes. Edit anything you like.' : 'Step 1: Frame writes the script and the scene list. Edit anything you like, then continue to the studio.'}</p>
-      <Blueprint session={session} setSession={pl.commit} autosave={fresh} global={props.global} />
+      <Blueprint session={session} setSession={pl.commit} autosave={fresh} global={props.global} log={pl.log} />
       {n > 0 && <div className="panel"><h3>How should the rest be built?</h3><Options session={session} pl={pl} />
         <button className="cta" onClick={() => { pl.commit(s => ({ ...s, stage: 'scenes', current: s.scenes.some(x => x.id === s.current) ? s.current : s.scenes[0].id, blueprint: { ...s.blueprint, status: 'approved' } })); pl.saveNow() }}>{session.settings.continuous ? 'Approve the script and build everything' : 'Approve the script and open the studio'}</button></div>}
     </section>}
@@ -131,6 +133,7 @@ export default function GuidedStudio(props) {
 
     {session.stage === 'finish' && <section className="gs-finish"><Finish session={session} setSession={pl.commit} autosave={fresh} global={props.global} playlist={props.playlist} project={props.project} row={props.row} onRow={props.onRow} onEdit={props.onEdit} onSocial={props.onSocial} onClone={props.onClone} />
       <div className="row tight"><button className="ghost sm" onClick={() => setStage('scenes')}>← Back to the studio</button></div></section>}
+    <LogPanel logs={pl.logs} scenes={session.scenes} onClear={pl.clearLogs} />
     {long && <LongRecording session={session} pl={pl} onClose={() => setLong(false)} />}
   </main>
 }
