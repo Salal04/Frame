@@ -2,6 +2,7 @@ import { useState } from 'react'
 import * as G from '../drive.js'
 import * as P from '../playlist.js'
 import WholeVideoPreview from './WholeVideoPreview.jsx'
+import { sendToBackend } from './render.js'
 
 const tailOf = scene => Number.isFinite(+scene.visual?.tailSec) ? +scene.visual.tailSec : .4
 const approved = s => s.narrationStatus !== 'stale' && s.voice?.status === 'approved' && s.visual?.status === 'approved'
@@ -21,33 +22,8 @@ export default function Finish({ session, setSession, autosave, global, playlist
     setBusy('Checking saved scene files...'); setError(''); setQueued(false)
     setSession(s => ({ ...s, activeStep: { kind: 'finish', sceneId: null, params: {}, startedAt: new Date().toISOString() } }))
     try {
-      if (!ready) throw new Error('Approve every narration, voice, and visual before sending the Render Map.')
-      const assets = session.scenes.flatMap(s => [{ id: s.voice.fileId, scene: s.id, kind: 'voice' }, { id: s.visual.codeFileId, scene: s.id, kind: 'visual' }])
-      for (const item of assets) {
-        if (!item.id) throw new Error(`Scene ${item.scene} is missing its ${item.kind} file.`)
-        let file
-        try { file = await G.getFile(item.id) } catch { throw new Error(`Scene ${item.scene} ${item.kind} file is missing or unavailable in Drive. Re-save it, then try again.`) }
-        if (file.trashed) throw new Error(`Scene ${item.scene} ${item.kind} file was deleted from Drive. Re-save it, then try again.`)
-      }
-      let start = 0
-      const scenes = session.scenes.map(s => {
-        const duration = Number(s.voice.duration), tailSec = tailOf(s), scene = {
-          id: s.id, heading: s.heading || `Scene ${s.id}`, narration: s.narration || '', start, tailSec,
-          voice: { fileId: s.voice.fileId, name: s.voice.name || `scene_${s.id}.wav`, duration, timeline: s.voice.timeline || [] },
-          visual: { engine: 'remotion', fileId: s.visual.codeFileId, name: s.visual.codeName || `scene_${s.id}.v${s.visual.version || 1}.tsx`, version: s.visual.version || 1, durationSec: duration + tailSec },
-        }
-        start += duration + tailSec
-        return scene
-      })
-      const renderMap = { version: 1, title: session.title, createdAt: new Date().toISOString(), settings: {
-        aspect: session.settings.aspect || project?.aspect || '16:9', quality: 'high', fps: 30,
-        language: session.settings.language || project?.language || 'en',
-        screen_language: session.settings.screen_language || project?.screen_language || session.settings.language || 'en',
-        urdu_font: global?.tools?.urdu_font || 'Noto Naskh Arabic',
-      }, scenes, captions: true, total: start }
-      setBusy('Sending Render Map to the backend...')
-      const submitted = await P.sendGuidedRenderMap(playlist, row, renderMap)
-      const fileIds = assets.map(x => x.id), sent = [...(session.submittedMaps || []), { at: renderMap.createdAt, fileIds }]
+      const { submitted, renderMap, fileIds } = await sendToBackend({ session, playlist, row, project, global, onStep: setBusy })
+      const sent = [...(session.submittedMaps || []), { at: renderMap.createdAt, fileIds }]
       const next = { ...session, stage: 'finish', submittedMaps: sent, backend: { status: 'Waiting', notes: '', submittedAt: renderMap.createdAt } }
       setSession(next); onRow?.(submitted); setQueued(true); await autosave.flush(true, next)
     } catch (e) { setError(e.message || 'Could not send the Render Map.'); setSession(s => ({ ...s, activeStep: null })) } finally { setBusy('') }

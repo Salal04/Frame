@@ -8,7 +8,7 @@ const sizeOf = aspect => ({ '16:9': [640, 360], '9:16': [360, 640], '1:1': [480,
 const sceneExt = /\.(tsx|ts|jsx|js)$/i
 const fileText = file => file.text()
 
-async function sceneFromZip(file) {
+export async function sceneFromZip(file) {
   if (file.size > 2_000_000) throw new Error('The scene ZIP must be smaller than 2 MB.')
   const bytes = await file.arrayBuffer(), view = new DataView(bytes), sig = 0x06054b50
   let end = -1
