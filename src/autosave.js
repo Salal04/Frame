@@ -13,6 +13,7 @@ export function useAutosave(session, save, id) {
   const [state, setState] = useState('Saved'), [savedAt, setSavedAt] = useState(null), [error, setError] = useState('')
   const latest = useRef(session), version = useRef(0), savedVersion = useRef(0), running = useRef(null), base = useRef(false)
   latest.current = session
+  const saveRef = useRef(save), idRef = useRef(id); saveRef.current = save; idRef.current = id   // timers made on first render must still see the CURRENT save/id (loaded Drive folders)
   const flush = async (force = false, snapshot = null) => {
     while (running.current) { try { await running.current } catch { /* try again below */ } }
     if (version.current === savedVersion.current && !force) return latest.current
@@ -20,10 +21,10 @@ export function useAutosave(session, save, id) {
     setState('Saving…')
     const job = (async () => {
       try {
-        const out = await save(snap)
+        const out = await saveRef.current(snap)
         savedVersion.current = Math.max(savedVersion.current, v)
         setSavedAt(new Date()); setError(''); setState(version.current === v ? 'Saved' : 'Unsaved changes')
-        writeLocal(id, { ...snap, _localAt: new Date().toISOString(), _clean: version.current === v }).catch(() => {})
+        writeLocal(idRef.current, { ...snap, _localAt: new Date().toISOString(), _clean: version.current === v }).catch(() => {})
         return out
       } catch (e) { setError(e?.message || String(e)); setState('Not saved, kept on this device'); throw e }
     })()
