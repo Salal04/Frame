@@ -389,3 +389,17 @@ fieldset.langs{border:0;padding:0;margin:12px 0;grid-column:1/-1}fieldset.langs 
 .gs-tl-foot{margin-top:10px;color:var(--mute);font-size:.92rem}.gs-tl-foot b{text-transform:none}
 @media(max-width:980px){.gs-main{grid-template-columns:1fr}.gs-right{max-height:none}.gs-screen{width:min(100%,calc(40vh*var(--rw)/var(--rh)))}.gs-tl-labels{width:44px}.gs-tl-labels b{font-size:.68rem}}
 @media(max-width:640px){.gs{padding:4px 10px 60px}.gs-top{padding:10px 14px}.gs-chips{width:100%}}
+
+/* full-screen reading view (visual description, narration + recorder): page behind is blurred */
+.gs-focus{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:clamp(10px,3vw,40px);background:rgba(20,18,44,.5);-webkit-backdrop-filter:blur(16px) saturate(.85);backdrop-filter:blur(16px) saturate(.85)}
+.gs-focus-card{width:min(1200px,100%);max-height:100%;display:flex;flex-direction:column;background:var(--clay);border-radius:32px;box-shadow:0 30px 90px rgba(10,8,30,.55);overflow:hidden}
+.gs-focus-card>header{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid rgba(42,37,80,.1)}.gs-focus-card>header h2{margin:0;font:600 1.15rem 'Fredoka',sans-serif}
+.gs-focus-body{flex:1;overflow:auto;padding:24px clamp(18px,4vw,56px)}
+.gs-focus-card>footer{padding:14px 24px 18px;border-top:1px solid rgba(42,37,80,.1);background:var(--bg)}
+.gs-big{white-space:pre-wrap;font:600 clamp(1.25rem,2.4vw,2rem)/1.65 'Figtree',system-ui,sans-serif;margin:0}
+.gs-big-lines p{font:600 clamp(1.8rem,4.2vw,3.4rem)/1.5 'Figtree',system-ui,sans-serif;margin:.3em 0;transition:opacity .2s,color .2s}.gs-big-lines p.now{color:var(--bolt)}.gs-big-lines p.done{opacity:.3}
+.gs-rec{display:flex;flex-wrap:wrap;align-items:center;gap:12px 22px}.gs-rec .cta{margin:0;min-width:130px}
+.gs-clock{font:700 2.1rem 'Fredoka',sans-serif;font-variant-numeric:tabular-nums}.gs-clock small{font-size:1.1rem;color:var(--mute);font-weight:500}
+.gs-rec-bar{flex:1 1 220px;height:16px;border-radius:999px;background:var(--clay);box-shadow:var(--in);overflow:hidden}.gs-rec-bar i{display:block;height:100%;background:var(--mint);border-radius:999px;transition:width .15s}.gs-rec-bar i.over{background:var(--peach)}
+.gs-left{font-size:1.1rem}.gs-meter.big{width:200px;height:16px}
+.gs-desc{background:var(--bg);box-shadow:var(--in);border-radius:22px;padding:12px 16px;margin:10px 0}.gs-desc pre{white-space:pre-wrap;font:inherit;margin:8px 0 0;max-height:220px;overflow:auto}

@@ -3,10 +3,11 @@ import { fetchAsset } from '../session.js'
 import { validateTsx } from '../engine/visual.js'
 import { sceneFromZip } from './SceneVisual.jsx'
 import { hasVoice } from './model.js'
+import { CopyButton, FocusModal, visualText } from './Focus.jsx'
 
 const ext = /\.(tsx|ts|jsx|js)$/i
 export default function VisualTab({ session, scene, pl, sceneError }) {
-  const [code, setCode] = useState(''), [note, setNote] = useState(''), [err, setErr] = useState(''), [msg, setMsg] = useState(''), file = useRef(null)
+  const [code, setCode] = useState(''), [note, setNote] = useState(''), [err, setErr] = useState(''), [msg, setMsg] = useState(''), [full, setFull] = useState(false), file = useRef(null)
   const job = pl.jobs[`${scene.id}:visual`], v = scene.visual || {}, problem = err || pl.errors[`${scene.id}:visual`] || sceneError || ''
   useEffect(() => { let on = true; setErr(''); setNote(''); if (!v.codeFileId) { setCode(''); return } fetchAsset(v.codeFileId).then(b => b.text()).then(t => on && setCode(t)).catch(e => on && setErr(e.message)); return () => { on = false } }, [scene.id, v.codeFileId])
   if (!hasVoice(scene)) return <div className="gs-tab"><p className="hint">The visual is timed to the voice, so make (or record) the voice first. Open the Voice tab.</p></div>
@@ -16,6 +17,8 @@ export default function VisualTab({ session, scene, pl, sceneError }) {
   const history = (scene.history || []).filter(x => x.type === 'visual-code').slice(-10).reverse()
   return <div className="gs-tab">
     <p className="hint">Draft preview only. The final video is rendered later by the backend and looks sharper.</p>
+    {(() => { const desc = visualText(scene); return desc ? <div className="gs-desc"><div className="row tight"><b>Visual description</b><span className="gs-sp" /><CopyButton text={desc} /><button className="ghost sm" onClick={() => setFull(true)}>⛶ Full screen</button></div><pre>{desc}</pre>
+      {full && <FocusModal title={`Visual description · ${scene.heading || 'scene'}`} onClose={() => setFull(false)} actions={<CopyButton text={desc} />}><pre className="gs-big">{desc}</pre></FocusModal>}</div> : <p className="hint">The visual description (idea, metaphor, animation steps) shows here once the visual has been planned.</p> })()}
     <div className="row tight">
       <button className="cta sm" disabled={!!job} onClick={run(() => pl.genVisual(scene.id, { note }))}>{job || (v.codeFileId ? '↻ Retry visual' : 'Design visual')}</button>
       {v.codeFileId && <button className="ghost sm" disabled={!!job} onClick={run(() => pl.genVisual(scene.id, { note: note || 'Improve this scene and keep what works.', mode: 'improve', replan: false }))}>Improve this version</button>}

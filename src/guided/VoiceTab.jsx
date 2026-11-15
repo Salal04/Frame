@@ -4,6 +4,9 @@ import { buildTimeline } from '../engine/voice.js'
 import { alignTimeline, decode, mono, peaksOf, sliceToWav, splitPoints, startMic, trimPoints } from './audio.js'
 import { hasVoice, words, fmtTime } from './model.js'
 import WaveCuts from './WaveCuts.jsx'
+import { CopyButton, FocusModal } from './Focus.jsx'
+
+const clock = t => `${Math.floor(Math.max(0, t) / 60)}:${String(Math.floor(Math.max(0, t) % 60)).padStart(2, '0')}`
 
 // One decoded recording (from the microphone or a file) that can be trimmed, auditioned and stored as the scene's voice.
 function Trimmer({ clip, onUse, onDiscard, narration, busy }) {
@@ -20,8 +23,8 @@ function Trimmer({ clip, onUse, onDiscard, narration, busy }) {
 
 export default function VoiceTab({ session, scene, pl, onLong }) {
   const st = session.settings, mode = st.voiceMode || 'ai', source = scene.voice?.source || 'ai'
-  const [clip, setClip] = useState(null), [rec, setRec] = useState(null), [secs, setSecs] = useState(0), [level, setLevel] = useState(0), [err, setErr] = useState(''), [saving, setSaving] = useState(false), [note, setNote] = useState(''), [anchor, setAnchor] = useState(null)
-  const mic = useRef(null), prompter = useRef(null), file = useRef(null)
+  const [clip, setClip] = useState(null), [rec, setRec] = useState(null), [secs, setSecs] = useState(0), [level, setLevel] = useState(0), [err, setErr] = useState(''), [saving, setSaving] = useState(false), [note, setNote] = useState(''), [anchor, setAnchor] = useState(null), [full, setFull] = useState(false)
+  const mic = useRef(null), prompter = useRef(null), bigLines = useRef(null), file = useRef(null)
   const job = pl.jobs[`${scene.id}:voice`], rtl = /[\u0600-\u06FF]/.test(scene.narration)
   useEffect(() => { setClip(null); setErr(''); setAnchor(null); return () => { const m = mic.current; if (m) { mic.current = null; m.stop().catch(() => {}); setRec(false) } } }, [scene.id])
   useEffect(() => { dispatchEvent(new CustomEvent('frame-rec', { detail: !!rec })); return () => dispatchEvent(new CustomEvent('frame-rec', { detail: false })) }, [rec])   // tells the studio: stop the preview, ignore the space bar
@@ -31,6 +34,7 @@ export default function VoiceTab({ session, scene, pl, onLong }) {
   const base = anchor && live[anchor.i] ? live[anchor.i].start + (secs - anchor.t) : secs
   const lineNow = rec ? (base >= (live.at(-1)?.end ?? 0) ? live.length - 1 : live.findIndex(x => base >= x.start && base < x.end)) : -1
   useEffect(() => { if (lineNow >= 0) prompter.current?.querySelector(`[data-i="${lineNow}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }) }, [lineNow])
+  useEffect(() => { if (full && lineNow >= 0) bigLines.current?.querySelector(`[data-i="${lineNow}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }) }, [lineNow, full])
   const setMode = m => pl.commit(s => ({ ...s, settings: { ...s.settings, voiceMode: m } }))
   const start = async () => { setErr(''); setAnchor(null); try { mic.current = await startMic(); setRec(true); setSecs(0) } catch (e) { setErr(e.message) } }
   const stop = async () => { try { const m = mic.current; mic.current = null; const blob = await m.stop(); setRec(false); setClip({ blob, buf: await decode(blob) }) } catch (e) { setRec(false); setErr(e.message) } }
@@ -44,6 +48,17 @@ export default function VoiceTab({ session, scene, pl, onLong }) {
   const aiErr = pl.errors[`${scene.id}:voice`]
   return <div className="gs-tab">
     <div className="gs-seg"><button className={mode === 'ai' ? 'on' : ''} onClick={() => setMode('ai')}>AI voice (Gemini)</button><button className={mode === 'mine' ? 'on' : ''} onClick={() => setMode('mine')}>My own voice</button></div>
+    <div className="row tight"><button className="ghost sm" disabled={!scene.narration.trim()} onClick={() => setFull(true)}>⛶ Full screen narration{mode === 'mine' ? ' + recorder' : ''}</button><CopyButton text={scene.narration} label="Copy narration" /></div>
+    {full && <FocusModal title={`Narration · ${scene.heading || 'scene'}`} rtl={rtl} onClose={() => setFull(false)} actions={<CopyButton text={scene.narration} label="Copy narration" />}
+      footer={mode === 'mine' ? <div className="gs-rec">
+        {!rec ? <button className="cta red" disabled={!scene.narration.trim() || !!clip} onClick={start}>● Record</button> : <button className="cta red" onClick={async () => { await stop(); setFull(false) }}>■ Stop</button>}
+        <div className="gs-clock" title="Recorded time">{clock(secs)}<small> / ≈ {clock(estimate)}</small></div>
+        <div className="gs-rec-bar"><i className={secs > estimate ? 'over' : ''} style={{ width: `${Math.min(100, (secs / estimate) * 100)}%` }} /></div>
+        <b className="gs-left">{!rec ? (clip ? 'Recording ready: close this view to trim it.' : `Guide length ≈ ${clock(estimate)}`) : secs <= estimate ? `≈ ${clock(estimate - secs)} left` : `${clock(secs - estimate)} over the guide`}</b>
+        {rec && <span className="gs-meter big"><i style={{ width: `${Math.min(100, level * 160)}%` }} /></span>}
+      </div> : null}>
+      <div className="gs-big-lines" ref={bigLines}>{live.length ? live.map(x => <p key={x.i} data-i={x.i} onClick={() => rec && setAnchor({ i: x.i, t: secs })} className={x.i === lineNow ? 'now' : rec && x.i < lineNow ? 'done' : ''}>{x.text}</p>) : <p className="muted">This scene has no script yet.</p>}</div>
+    </FocusModal>}
     <p className="hint">{mode === 'mine' && rec ? 'Reading faster or slower than the guide? Click the line you are on and the highlight follows you.' : mode === 'ai' ? 'Voices for the next scenes are made together in the background while you work.' : 'You record or upload. Continuous build waits for you on scenes that have no recording yet.'}</p>
 
     {mode === 'ai' && <>

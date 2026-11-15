@@ -99,7 +99,7 @@ export function usePipeline({ session, setSession, autosave, global, folders, pl
     const g = needGem(), cur = scene(id), st = look()
     if (!cur?.voice?.fileId) throw new Error('Make the voice first: the visual is timed to it.')
     let working = cur
-    if (replan || !cur.visual?.steps?.length) { log('info', 'Planning the animation steps…', id); const spec = await visualPlan(g, st, cur); working = { ...cur, visual: { ...cur.visual, status: 'draft', steps: spec.steps || [], visuals: spec.visuals || [] } }; patch(id, x => ({ ...x, visual: working.visual })) }
+    if (replan || !cur.visual?.steps?.length) { log('info', 'Planning the animation steps…', id); const spec = await visualPlan(g, st, cur); working = { ...cur, visual: { ...cur.visual, status: 'draft', steps: spec.steps || [], visuals: spec.visuals || [], bigIdea: spec.big_idea || '', metaphor: spec.metaphor || '' } }; patch(id, x => ({ ...x, visual: working.visual })) }
     const previous = mode === 'improve' ? await loadCode(id) : ''
     let n = note, code = '', last
     for (let attempt = 0; attempt < 3; attempt++) {
