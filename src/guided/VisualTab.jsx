@@ -4,10 +4,11 @@ import { validateTsx } from '../engine/visual.js'
 import { sceneFromZip } from './SceneVisual.jsx'
 import { hasVoice } from './model.js'
 import { CopyButton, FocusModal, visualText } from './Focus.jsx'
+import OtherLlm from './OtherLlm.jsx'
 
 const ext = /\.(tsx|ts|jsx|js)$/i
 export default function VisualTab({ session, scene, pl, sceneError }) {
-  const [code, setCode] = useState(''), [note, setNote] = useState(''), [err, setErr] = useState(''), [msg, setMsg] = useState(''), [full, setFull] = useState(false), file = useRef(null)
+  const [code, setCode] = useState(''), [note, setNote] = useState(''), [err, setErr] = useState(''), [msg, setMsg] = useState(''), [full, setFull] = useState(false), [other, setOther] = useState(false), file = useRef(null)
   const job = pl.jobs[`${scene.id}:visual`], v = scene.visual || {}, problem = err || pl.errors[`${scene.id}:visual`] || sceneError || ''
   useEffect(() => { let on = true; setErr(''); setNote(''); if (!v.codeFileId) { setCode(''); return } fetchAsset(v.codeFileId).then(b => b.text()).then(t => on && setCode(t)).catch(e => on && setErr(e.message)); return () => { on = false } }, [scene.id, v.codeFileId])
   if (!hasVoice(scene)) return <div className="gs-tab"><p className="hint">The visual is timed to the voice, so make (or record) the voice first. Open the Voice tab.</p></div>
@@ -23,8 +24,10 @@ export default function VisualTab({ session, scene, pl, sceneError }) {
       <button className="cta sm" disabled={!!job} onClick={run(() => pl.genVisual(scene.id, { note }))}>{job || (v.codeFileId ? '↻ Retry visual' : 'Design visual')}</button>
       {v.codeFileId && <button className="ghost sm" disabled={!!job} onClick={run(() => pl.genVisual(scene.id, { note: note || 'Improve this scene and keep what works.', mode: 'improve', replan: false }))}>Improve this version</button>}
       {v.codeFileId && <button className="ghost sm" disabled={!!job} onClick={run(() => pl.genVisual(scene.id, { note: 'Re-time the animation steps to match the voice timeline exactly.', mode: 'improve' }))}>Sync to voice</button>}
+      <button className="ghost sm" disabled={!!job} onClick={() => setOther(true)}>✨ Create with another AI</button>
       <button className="ghost sm" disabled={!!job} onClick={() => file.current.click()}>Upload my own scene</button><input ref={file} type="file" accept=".tsx,.ts,.jsx,.js,.zip" hidden onChange={own} />
     </div>
+    {other && <OtherLlm session={session} scene={scene} pl={pl} onClose={done => { setOther(false); if (done) setMsg('Visual from the other AI saved.') }} />}
     <label>What should change?<textarea rows={2} value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. bigger text, show the numbers one by one, calmer colours" /></label>
     {problem && <div className="err">{problem}{v.codeFileId && <> <button className="ghost sm" disabled={!!job} onClick={run(() => pl.fixVisual(scene.id, problem))}>Fix with AI</button></>}</div>}
     {v.status === 'stale' && v.codeFileId && !job && <p className="note">The voice or text changed after this visual was made. Press <b>Sync to voice</b> (or Retry) so the animation matches.</p>}

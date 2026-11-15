@@ -403,3 +403,9 @@ fieldset.langs{border:0;padding:0;margin:12px 0;grid-column:1/-1}fieldset.langs 
 .gs-rec-bar{flex:1 1 220px;height:16px;border-radius:999px;background:var(--clay);box-shadow:var(--in);overflow:hidden}.gs-rec-bar i{display:block;height:100%;background:var(--mint);border-radius:999px;transition:width .15s}.gs-rec-bar i.over{background:var(--peach)}
 .gs-left{font-size:1.1rem}.gs-meter.big{width:200px;height:16px}
 .gs-desc{background:var(--bg);box-shadow:var(--in);border-radius:22px;padding:12px 16px;margin:10px 0}.gs-desc pre{white-space:pre-wrap;font:inherit;margin:8px 0 0;max-height:220px;overflow:auto}
+
+/* Create with another AI */
+.gs-steps{list-style:none;display:flex;flex-wrap:wrap;gap:10px;padding:0;margin:0 0 14px}.gs-steps li{display:flex;align-items:center;gap:8px;background:var(--bg);box-shadow:var(--in);border-radius:999px;padding:6px 16px 6px 8px;font-weight:600}.gs-steps b{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--bolt);color:#fff;font-size:.85rem}
+.gs-ai{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0 12px}.gs-ai .ghost.on{background:var(--bolt);color:#fff}.gs-ai a{text-decoration:none}
+.gs-prompt{white-space:pre-wrap;font:.86rem/1.55 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);box-shadow:var(--in);border-radius:18px;padding:14px 18px;max-height:46vh;overflow:auto;margin:8px 0}
+.gs-paste{width:100%;font:.86rem/1.5 ui-monospace,Menlo,Consolas,monospace}

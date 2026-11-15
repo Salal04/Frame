@@ -23,9 +23,10 @@ SCENE:\n${JSON.stringify(brief(scene))}`, { task: 'medium', signal })
   return { ...analysis, steps: pinSteps(analysis.steps, scene.voice?.timeline || scene.timeline || [], scene.voice?.duration || scene.durationSec || 1) }
 }
 
-export async function genCode(gem, cfg, spec, { note = '', previous = '', signal } = {}) {
+// The full instruction text for writing one scene. Used by the in-app generator AND by "Create with another AI" (same rules, so both give scenes that run).
+export const buildCodePrompt = (cfg, spec, { note = '', previous = '' } = {}) => {
   const rtl = cfg.screen_language === 'ur'
-  const prompt = `Write ONE complete Remotion TSX scene (export default function Scene()). Imports allowed only from react, remotion, @remotion/shapes, @remotion/paths. Use useCurrentFrame() and useVideoConfig(); no props, no images, no audio, no network, no external fonts.
+  return `Write ONE complete Remotion TSX scene (export default function Scene()). Imports allowed only from react, remotion, @remotion/shapes, @remotion/paths. Use useCurrentFrame() and useVideoConfig(); no props, no images, no audio, no network, no external fonts.
 CRAFT RULES
 - Size everything from useVideoConfig() width/height so it works in 16:9, 9:16, 1:1 and 4:5. Keep a 6% safe margin, and keep the bottom 18% EMPTY: the video adds captions there.
 - Fill the frame with ONE clear picture built from inline SVG and shapes (a diagram, an object, a worked example), not a slide of bullet points. Text is short labels only, at least 4.5% of the frame height, high contrast.
@@ -36,6 +37,10 @@ CRAFT RULES
 - Return only the code in one tsx block.
 SCENE SPEC: ${JSON.stringify(spec)}
 ${note ? `Instruction: ${note}\n` : ''}${previous ? `Previous code to improve:\n${previous}` : ''}`
+}
+
+export async function genCode(gem, cfg, spec, { note = '', previous = '', signal } = {}) {
+  const prompt = buildCodePrompt(cfg, spec, { note, previous })
   const code = await gem.code(prompt, { signal }); const error = validateTsx(code); if (error) throw new Error(`Generated scene rejected: ${error}`); return code
 }
 export const repairCode = (gem, cfg, spec, code, error, opt = {}) => genCode(gem, cfg, spec, { ...opt, previous: code, note: `Fix this error: ${error}` })
